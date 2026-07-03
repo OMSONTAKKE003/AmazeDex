@@ -27,7 +27,7 @@ class Client:
 
 
         self.model = mujoco.MjModel.from_xml_path(
-            f"{ROOT_PATH}/AHSimulation/AH_Right/mjcf/scene.xml"
+            f"{ROOT_PATH}/Hand_Demo/AH_Right/mjcf/scene.xml"
         )
         # self.data=mujoco.MjData(self.model)
 
