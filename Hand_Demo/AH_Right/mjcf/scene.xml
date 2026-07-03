@@ -22,34 +22,28 @@
         <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
 
         <body name="finger1_target" pos="-0.15888899 0.02402413 0.14838594" quat="0.97582422 -0.00043224 -0.21854792 -0.00192848" mocap="true">
-            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="1 0. 0. .2"/>
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
         </body>
 
         <body name="finger2_target" pos="-0.15248302 -0.01469891 0.14838594" quat="0.97458778 0.01100653 -0.21827122 0.04914458" mocap="true">
-            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="1 0. 0. .2"/>
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
         </body>
 
         <body name="finger3_target" pos="-0.14015328 -0.05419646 0.14838595" quat="0.96928719 0.02525880 -0.21708316 0.11277965" mocap="true">
-            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="1 0. 0. .2"/>
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
         </body>
 
         <body name="finger4_target" pos="-0.08958578 0.04433619 0.18118535" quat="0.83200905 -0.14501177 -0.52752170 0.09194231" mocap="true">
-            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="1 0. 0. .2"/>
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
         </body>
 
-        <body name="cube" pos="-0.05020000 0.00009000 0.13950000" quat="-1.20000000 0.00000000 0.00000000 0.90000000">
+        <body name="cube" pos="-0.07500000 0.02100000 0.14500000" quat="1 0 0 0">
             <freejoint/>
 
             <geom type="mesh" mesh="cube_mesh" rgba="0.85 0.85 0.85 1"/>
 
             <!-- Face-color markers only: contype/conaffinity=0 so they don't add
                  duplicate, slightly-offset collision shells on top of cube_mesh -->
-            <geom type="box" size="0.0301 0.0301 0.0002" pos="0 -0.03 0.0302"  contype="0" conaffinity="0" rgba="0.9 0.1 0.1 0.35"/>
-            <geom type="box" size="0.0301 0.0301 0.0002" pos="0 -0.03 -0.0302" contype="0" conaffinity="0" rgba="0.1 0.7 0.2 0.35"/>
-            <geom type="box" size="0.0301 0.0002 0.0301" pos="0 0.0002 0"      contype="0" conaffinity="0" rgba="0.2 0.4 0.9 0.35"/>
-            <geom type="box" size="0.0301 0.0002 0.0301" pos="0 -0.0602 0"     contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
-            <geom type="box" size="0.0002 0.0301 0.0301" pos="0.0302 -0.03 0"  contype="0" conaffinity="0" rgba="0.9 0.5 0.1 0.35"/>
-            <geom type="box" size="0.0002 0.0301 0.0301" pos="-0.0302 -0.03 0" contype="0" conaffinity="0" rgba="0.6 0.2 0.8 0.35"/>
         </body>
     </worldbody>
     
