@@ -1,0 +1,51 @@
+<mujoco model="scene_with_cube">
+    <compiler meshdir="assets" angle="degree"/>
+
+    <include file="robot.xml" />
+
+    <visual>
+        <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
+        <rgba haze="0.15 0.25 0.35 1" />
+        <global azimuth="160" elevation="-20" />
+    </visual>
+
+    <asset>
+        <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.2 0.3 0.4" rgb2="0.1 0.2 0.3" markrgb="0.8 0.8 0.8" width="300" height="300" />
+        <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0.2" />
+        
+        <mesh name="cube_mesh" file="cube.stl"/>
+    </asset>
+
+    <worldbody>
+        <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
+        <geom name="floor" size="0 0 0.05" pos="0 0 0" type="plane" material="groundplane" />
+
+        <body name="finger1_target" pos="-0.15888899 0.02402413 0.14838594" quat="0.97582422 -0.00043224 -0.21854792 -0.00192848" mocap="true">
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
+        </body>
+
+        <body name="finger2_target" pos="-0.15248302 -0.01469891 0.14838594" quat="0.97458778 0.01100653 -0.21827122 0.04914458" mocap="true">
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
+        </body>
+
+        <body name="finger3_target" pos="-0.14015328 -0.05419646 0.14838595" quat="0.96928719 0.02525880 -0.21708316 0.11277965" mocap="true">
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
+        </body>
+
+        <body name="finger4_target" pos="-0.08958578 0.04433619 0.18118535" quat="0.83200905 -0.14501177 -0.52752170 0.09194231" mocap="true">
+            <geom type="sphere" size=".01" contype="0" conaffinity="0" rgba="0.9 0.9 0.1 0.35"/>
+        </body>
+
+        <body name="cube" pos="-0.07500000 0.02100000 0.14500000" quat="1 0 0 0">
+            <freejoint/>
+
+            <geom type="mesh" mesh="cube_mesh" rgba="0.85 0.85 0.85 1"/>
+
+            <!-- Face-color markers only: contype/conaffinity=0 so they don't add
+                 duplicate, slightly-offset collision shells on top of cube_mesh -->
+        </body>
+    </worldbody>
+    
+    <include file="keyframes.xml"/>
+</mujoco>
