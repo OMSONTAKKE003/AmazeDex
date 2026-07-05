@@ -25,15 +25,15 @@
         <geom name="floor" size="0 0 0.05" pos="0 0 -0.2" type="plane" material="groundplane" />
         
         <body name="cube" pos="-0.09 0.01 0.1">
-    <freejoint/>
+    <freejoint name ="cube_joint"/>
 
     <geom
         type="mesh"
         mesh="cube_mesh"
         size="0.02 0.02 0.02"
         mass="0.05"
-        contype="1"
-        conaffinity="1"
+        contype="5"
+        conaffinity="5"
         rgba="1 1 1 1"/>
 </body>
 
