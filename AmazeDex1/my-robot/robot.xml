@@ -511,11 +511,11 @@ size="0.0065"/>
     <mesh file="proximal_shell.stl"/>
     <mesh file="std00447_thermoplastique_m2_5x6__configuration_default.stl"/>
     <mesh file="distal_shell.stl"/>
-    <material name="sts3032_material" rgba="0.972549 0.529412 0.00392157 1"/>
+    <material name="sts3032_material" rgba="0 0 0 1"/>
     <material name="finger_frame_material" rgba="0.8 0.8 0.8 1"/>
-    <material name="r_hand_plate_material" rgba="0.301961 0.301961 0.301961 1"/>
+    <material name="r_hand_plate_material" rgba="1 0 0 1"/>
     <material name="bushing_0608_04_material" rgba="0.301961 0.301961 0.301961 1"/>
-    <material name="r_wrist_interface_material" rgba="0.301961 0.301961 0.301961 1"/>
+    <material name="r_wrist_interface_material" rgba="1 1 1 1"/>
     <material name="part_4_material" rgba="0.768627 0.886275 0.952941 1"/>
     <material name="part_2_material" rgba="0.231373 0.380392 0.705882 1"/>
     <material name="part_1_material" rgba="0.615686 0.811765 0.929412 1"/>
@@ -534,9 +534,9 @@ size="0.0065"/>
     <material name="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material" rgba="0.603922 0.647059 0.686275 1"/>
     <material name="std00447_thermoplastique_m2_5x6__configuration_default_material" rgba="0.901961 0.901961 0.901961 1"/>
     <material name="distal_material" rgba="0.8 0.8 0.8 1"/>
-    <material name="distal_shell_material" rgba="1 1 1 1"/>
+    <material name="distal_shell_material" rgba="1 0 0 1"/>
     <material name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material" rgba="0.603922 0.647059 0.686275 1"/>
-    <material name="proximal_shell_material" rgba="1 1 1 1"/>
+    <material name="proximal_shell_material" rgba="1 0 0 1"/>
     <material name="proximal_material" rgba="0.8 0.8 0.8 1"/>
   </asset>
   <actuator>
