@@ -125,7 +125,29 @@
               <geom type="mesh" class="visual" pos="-0 0 0.00225" quat="0 0.510117 -0.860105 0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip1" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
-              <geom class="collision" type="capsule" fromto="0 0 0 0.0283456 -0.0266027 0.00225" size="0.007"/>
+              <!-- joint -->
+
+<geom
+type="sphere"
+class="collision"
+pos="0 0 0"
+size="0.009"/>
+
+<!-- base -->
+
+<geom
+type="box"
+class="collision"
+pos="-0.016 0 0"
+size="0.011 0.010 0.009"/>
+
+<!-- shaft -->
+
+<geom
+type="capsule"
+class="collision"
+fromto="-0.020 0 0 -0.050 0 0"
+size="0.0065"/>
               <body name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" pos="-0.000105947 -0.00599906 0.00655" quat="0 -1 -0.000555496 -0">
                 <joint axis="0 0 1" name="passive_5 (1)" type="hinge" limited="true" range="-0.611 0.611"/>
                 <inertial pos="-0.0249171 -0.00392936 0.0052354" mass="0.0101851" fullinertia="4.96149e-07 2.52849e-06 2.3577e-06 2.4514e-08 1.19e-10 3.04e-10"/>
@@ -203,7 +225,29 @@
               <geom type="mesh" class="visual" pos="0 0 0.00225" quat="0 -0.510117 0.860105 -0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip2" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
-              <geom class="collision" type="capsule" fromto="0 0 0 0.0283456 -0.0266027 0.00225" size="0.007"/>
+              <!-- joint -->
+
+<geom
+type="sphere"
+class="collision"
+pos="0 0 0"
+size="0.009"/>
+
+<!-- base -->
+
+<geom
+type="box"
+class="collision"
+pos="-0.016 0 0"
+size="0.011 0.010 0.009"/>
+
+<!-- shaft -->
+
+<geom
+type="capsule"
+class="collision"
+fromto="-0.020 0 0 -0.050 0 0"
+size="0.0065"/>
               <body name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_2" pos="-0.000105947 -0.00599906 0.00655" quat="0 -1 -0.000555496 -0">
                 <joint axis="0 0 1" name="passive_5 (2)" type="hinge" limited="true" range="-0.611 0.611"/>
                 <inertial pos="-0.0249171 -0.00392936 0.0052354" mass="0.0101851" fullinertia="4.96149e-07 2.52849e-06 2.3577e-06 2.4514e-08 1.19e-10 3.04e-10"/>
@@ -281,7 +325,29 @@
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material"/>
               <site group="3" name="tip3" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
-              <geom class="collision" type="capsule" fromto="0 0 0 0.0283456 -0.0266027 0.00225" size="0.007"/>
+              <!-- joint -->
+
+<geom
+type="sphere"
+class="collision"
+pos="0 0 0"
+size="0.009"/>
+
+<!-- base -->
+
+<geom
+type="box"
+class="collision"
+pos="-0.016 0 0"
+size="0.011 0.010 0.009"/>
+
+<!-- shaft -->
+
+<geom
+type="capsule"
+class="collision"
+fromto="-0.020 0 0 -0.050 0 0"
+size="0.0065"/>
               <body name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_3" pos="-0.000105947 -0.00599906 0.00655" quat="0 -1 -0.000555496 -0">
                 <joint axis="0 0 1" name="passive_5 (3)" type="hinge" limited="true" range="-0.611 0.611"/>
                 <inertial pos="-0.0249171 -0.00392936 0.0052354" mass="0.0101851" fullinertia="4.96149e-07 2.52849e-06 2.3577e-06 2.4514e-08 1.19e-10 3.04e-10"/>
@@ -359,7 +425,29 @@
               <geom type="mesh" class="visual" pos="0.0201332 -0.0157612 -0.00735" quat="0.860104 -0 -0 0.510119" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <site group="3" name="tip4" pos="0.0283456 -0.0266027 0.00225" quat="0.61547 0.61547 0.348134 0.348134"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
-              <geom class="collision" type="capsule" fromto="0 0 0 0.0283456 -0.0266027 0.00225" size="0.007"/>
+              <!-- joint -->
+
+<geom
+type="sphere"
+class="collision"
+pos="0 0 0"
+size="0.009"/>
+
+<!-- base -->
+
+<geom
+type="box"
+class="collision"
+pos="-0.016 0 0"
+size="0.011 0.010 0.009"/>
+
+<!-- shaft -->
+
+<geom
+type="capsule"
+class="collision"
+fromto="-0.020 0 0 -0.050 0 0"
+size="0.0065"/>
               <body name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_4" pos="-0.000105927 -0.00599906 0.00655" quat="0 -1 -0.000555389 -0">
                 <joint axis="0 0 1" name="passive_5 (4)" type="hinge" limited="true" range="-0.611 0.611"/>
                 <inertial pos="-0.0249171 -0.00392936 0.0052354" mass="0.0101851" fullinertia="4.96149e-07 2.52849e-06 2.3577e-06 2.4514e-08 1.19e-10 3.04e-10"/>
