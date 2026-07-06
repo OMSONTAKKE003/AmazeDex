@@ -121,7 +121,7 @@
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 -0.00735" quat="0.860105 -0 -0 0.510117" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 0.01185" quat="0 0.860105 0.510117 -0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal" material="distal_material"/>
-              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material"/>
+              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material_f1"/>
               <geom type="mesh" class="visual" pos="-0 0 0.00225" quat="0 0.510117 -0.860105 0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip1" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
@@ -155,7 +155,7 @@ size="0.0065"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 0.01685" quat="0 -0.707107 0.707107 -0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.707107 -0 0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
                 <geom type="mesh" class="visual" pos="-0 0 0.00515" quat="0.707107 0 -0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
-                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material"/>
+                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material_f1"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00525" quat="0.5 0.5 0.5 -0.5" mesh="proximal" material="proximal_material"/>
                 <site group="3" name="closing_3 (1)_1" pos="-0.052 0 0" quat="1 -0 0 0"/>
                 <site group="3" name="closing_3 (1)_1_z" pos="-0.052 0 0.1" quat="1 -0 0 0"/>
@@ -220,7 +220,7 @@ size="0.0065"/>
               <inertial pos="0.0150962 -0.0127974 0.00225" mass="0.00540375" fullinertia="3.33567e-07 5.77676e-07 7.69492e-07 3.27688e-07 0 0"/>
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal" material="distal_material"/>
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 0.01185" quat="0 0.860105 0.510117 0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
-              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material"/>
+              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material_f2"/>
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 -0.00735" quat="0.860105 -0 0 0.510117" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="0 0 0.00225" quat="0 -0.510117 0.860105 -0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip2" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
@@ -255,7 +255,7 @@ size="0.0065"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 0.01685" quat="0 0.707107 -0.707107 -0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 -0.00655" quat="0.707107 -0 0 -0.707107" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00525" quat="0.5 0.5 0.5 -0.5" mesh="proximal" material="proximal_material"/>
-                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material"/>
+                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material_f2"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.707107 0 -0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
                 <geom class="collision" type="capsule" fromto="0 0 0 -0.052 0 0" size="0.008"/>
                 <site group="3" name="closing_3 (2)_1" pos="-0.052 0 -0" quat="1 -0 -0 -0"/>
@@ -322,7 +322,7 @@ size="0.0065"/>
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 0.01185" quat="0 0.860105 0.510117 0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="0 0 0.00225" quat="0 -0.510117 0.860105 -0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal" material="distal_material"/>
-              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material"/>
+              <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material_f3"/>
               <site group="3" name="tip3" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
               <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
               <!-- joint -->
@@ -351,7 +351,7 @@ size="0.0065"/>
               <body name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_3" pos="-0.000105947 -0.00599906 0.00655" quat="0 -1 -0.000555496 -0">
                 <joint axis="0 0 1" name="passive_5 (3)" type="hinge" limited="true" range="-0.611 0.611"/>
                 <inertial pos="-0.0249171 -0.00392936 0.0052354" mass="0.0101851" fullinertia="4.96149e-07 2.52849e-06 2.3577e-06 2.4514e-08 1.19e-10 3.04e-10"/>
-                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material"/>
+                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material_f3"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 -0.00655" quat="0.707107 0 -0 -0.707107" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00525" quat="0.5 0.5 0.5 -0.5" mesh="proximal" material="proximal_material"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.707107 -0 -0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
@@ -418,7 +418,7 @@ size="0.0065"/>
             <body name="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_4" pos="0.00540711 -0.0485439 0.00106082" quat="0.0311381 0.844158 -0.529224 0.0796808">
               <joint axis="0 0 1" name="passive4 (4)" type="hinge" limited="true" range="-0.611 0.611"/>
               <inertial pos="0.0150962 -0.0127974 0.00225" mass="0.00540375" fullinertia="3.33565e-07 5.77678e-07 7.69492e-07 3.27687e-07 0 0"/>
-              <geom type="mesh" class="visual" pos="-0.0457365 0.0189379 0.00225" quat="0.360708 -0.608185 -0.360708 -0.608185" mesh="distal_shell" material="distal_shell_material"/>
+              <geom type="mesh" class="visual" pos="-0.0457365 0.0189379 0.00225" quat="0.360708 -0.608185 -0.360708 -0.608185" mesh="distal_shell" material="distal_shell_material_f4"/>
               <geom type="mesh" class="visual" pos="0.0201332 -0.0157612 0.01185" quat="0 0.860104 0.510119 0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="0 -0 0.00225" quat="0 -0.510119 0.860104 -0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <geom type="mesh" class="visual" pos="-0.0457365 0.0189379 0.00225" quat="0.360708 -0.608185 -0.360708 -0.608185" mesh="distal" material="distal_material"/>
@@ -454,7 +454,7 @@ size="0.0065"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 0.01685" quat="0 0.707107 -0.707107 -0" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.707107 -0 -0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
                 <geom type="mesh" class="visual" pos="0 -0 0.00515" quat="0.707107 0 -0 -0.707107" mesh="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b" material="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material"/>
-                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material"/>
+                <geom type="mesh" class="visual" pos="-0.052 0 0.00515" quat="0.5 0.5 0.5 -0.5" mesh="proximal_shell" material="proximal_shell_material_f4"/>
                 <geom type="mesh" class="visual" pos="-0.052 0 0.00525" quat="0.5 0.5 0.5 -0.5" mesh="proximal" material="proximal_material"/>
                 <geom type="mesh" class="visual" pos="-0.022 -0.004 -0.00655" quat="0.707107 -0 0 -0.707107" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
                 <geom class="collision" type="capsule" fromto="0 0 0 -0.052 0 0" size="0.008"/>
@@ -534,9 +534,15 @@ size="0.0065"/>
     <material name="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material" rgba="0.603922 0.647059 0.686275 1"/>
     <material name="std00447_thermoplastique_m2_5x6__configuration_default_material" rgba="0.901961 0.901961 0.901961 1"/>
     <material name="distal_material" rgba="0.8 0.8 0.8 1"/>
-    <material name="distal_shell_material" rgba="1 0 0 1"/>
+    <material name="distal_shell_material_f1" rgba="1 0 0 1"/>
+    <material name="distal_shell_material_f2" rgba="1  1 1 1"/>
+    <material name="distal_shell_material_f3" rgba="1 0 0 1"/>
+    <material name="distal_shell_material_f4" rgba="1 0 0 1"/>
     <material name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material" rgba="0.603922 0.647059 0.686275 1"/>
-    <material name="proximal_shell_material" rgba="1 0 0 1"/>
+    <material name="proximal_shell_material_f1" rgba="1 1  1 1"/>
+    <material name="proximal_shell_material_f2" rgba="1  1 1 1"/>
+    <material name="proximal_shell_material_f3" rgba="1 0 0 1"/>
+    <material name="proximal_shell_material_f4" rgba="1 0 0 1"/>
     <material name="proximal_material" rgba="0.8 0.8 0.8 1"/>
   </asset>
   <actuator>

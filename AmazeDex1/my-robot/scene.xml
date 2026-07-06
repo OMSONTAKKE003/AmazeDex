@@ -15,7 +15,7 @@
             rgb2=" 0.07 0.07 0.07"
             markrgb=" 0.07 0.07 0.07" width="300" height="300" />
         <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
-            reflectance="0.09" />
+            reflectance="0.001" />
         <mesh name="cube_mesh" file="cube.stl"/>
   
     </asset>
