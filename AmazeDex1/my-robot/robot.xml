@@ -516,10 +516,10 @@ size="0.0065"/>
     <material name="r_hand_plate_material" rgba="1 0 0 1"/>
     <material name="bushing_0608_04_material" rgba="0.301961 0.301961 0.301961 1"/>
     <material name="r_wrist_interface_material" rgba="1 1 1 1"/>
-    <material name="part_4_material" rgba="0.768627 0.886275 0.952941 1"/>
+    <material name="part_4_material" rgba="0 0 0  1"/>
     <material name="part_2_material" rgba="0.917647 0.917647 0.917647 1"/>
-    <material name="part_1_material" rgba="0.615686 0.811765 0.929412 1"/>
-    <material name="amazing_hand_rename_material" rgba="0.972549 0.529412 0.00392157 1"/>
+    <material name="part_1_material" rgba="0 0 0  1"/>
+    <material name="amazing_hand_rename_material" rgba="0 0 0 1"/>
     <material name="part_3_material" rgba="0.917647 0.917647 0.917647 1"/>
     <material name="rotule_ball_material" rgba="0.960784 0.835294 0.470588 1"/>
     <material name="ph_pan_head_screw_m2x0_40_x_10__2803432263e518bbd16bccbbef8784ed_material" rgba="0.603922 0.647059 0.686275 1"/>
@@ -536,12 +536,12 @@ size="0.0065"/>
     <material name="distal_material" rgba="0.8 0.8 0.8 1"/>
     <material name="distal_shell_material_f1" rgba="1 0 0 1"/>
     <material name="distal_shell_material_f2" rgba="1  1 1 1"/>
-    <material name="distal_shell_material_f3" rgba="1 0 0 1"/>
+    <material name="distal_shell_material_f3" rgba="0 0 0 1"/>
     <material name="distal_shell_material_f4" rgba="1 0 0 1"/>
     <material name="parallel_pin_2_x_16__da4b7ddbe9d803fe3fbc70f2e822b99b_material" rgba="0.603922 0.647059 0.686275 1"/>
     <material name="proximal_shell_material_f1" rgba="1 1  1 1"/>
     <material name="proximal_shell_material_f2" rgba="1  1 1 1"/>
-    <material name="proximal_shell_material_f3" rgba="1 0 0 1"/>
+    <material name="proximal_shell_material_f3" rgba="0  0 0  1"/>
     <material name="proximal_shell_material_f4" rgba="1 0 0 1"/>
     <material name="proximal_material" rgba="0.8 0.8 0.8 1"/>
   </asset>

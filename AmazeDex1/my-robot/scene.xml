@@ -1,7 +1,12 @@
 <mujoco model="scene">
     <include file="robot.xml" />
 <option gravity="0 0 -9.81"/>
-<size njmax="500" nconmax="200"/>
+<!-- njmax/nconmax raised: the hand has ~30 bodies with several ball/hinge
+     joints each, so self-contact + equality-constraint counts during a
+     messy grasp can exceed the old limits (500/200). Hitting that limit is
+     a *fatal* MuJoCo error that kills the whole Python process instantly -->
+     this is the most likely cause of "runs a few episodes then crashes". -->
+<size njmax="3000" nconmax="1000"/>
     <visual>
         <headlight diffuse="0.6 0.6 0.6" ambient="0.3 0.3 0.3" specular="0 0 0" />
         <rgba haze="0.15 0.25 0.35 1" />
@@ -11,11 +16,11 @@
     <asset>
         <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512"
             height="3072" />
-        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.07 0.07 0.07"
-            rgb2=" 0.07 0.07 0.07"
-            markrgb=" 0.07 0.07 0.07" width="300" height="300" />
+        <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.655 0.627 0.580"
+            rgb2=" 0.655 0.627 0.580"
+            markrgb="0.655 0.627 0.580" width="300" height="300" />
         <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5"
-            reflectance="0.001" />
+            reflectance="0.000" />
         <mesh name="cube_mesh" file="cube.stl"/>
   
     </asset>
@@ -40,6 +45,6 @@
 
     </worldbody>
      <worldbody>
-    <camera name="tracking_camera" pos="0.0 -0.8 0.5" euler="45 0 0" fovy="45" />
+    <camera name="tracking_camera" pos="-0.05 -0.7 0.5" euler="45 0 270" fovy="45" />
 </worldbody>
 </mujoco>
