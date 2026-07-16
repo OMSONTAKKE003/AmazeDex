@@ -1,13 +1,3 @@
-"""
-Generic MuJoCo base class for Gymnasium environments.
-Handles the part that's the same for every MuJoCo env: loading the model,
-stepping physics, and rendering. A task (like amazedex_cube_env.py) subclasses
-this and only has to implement `reset_model()` and `_get_obs()`.
-Same shape as Gymnasium's own base class:
-https://github.com/Farama-Foundation/Gymnasium/blob/main/gymnasium/envs/mujoco/mujoco_env.py
-
-"""
-
 from __future__ import annotations
 
 import gymnasium as gym
@@ -17,7 +7,7 @@ import numpy as np
 
 
 class MujocoEnv(gym.Env):
-    """Loads a MuJoCo model and exposes reset/step/render for subclasses."""
+    """Loads a MuJoCo model """
 
     def __init__(self, model_path: str, frame_skip: int, render_mode: str | None = None):
         self.model = mujoco.MjModel.from_xml_path(model_path)
@@ -31,7 +21,7 @@ class MujocoEnv(gym.Env):
         self._viewer = None
         self._renderer = None
 
-    # --- subclasses implement these --------
+   
     def reset_model(self) -> None:
         """Set self.data.qpos / qvel for a new episode."""
         raise NotImplementedError
@@ -40,7 +30,7 @@ class MujocoEnv(gym.Env):
         """Build the observation from self.data."""
         raise NotImplementedError
 
-    # --- Gymnasium API -------------
+    # Gymnasium API 
     def reset(self, *, seed: int | None = None, options: dict | None = None):
         super().reset(seed=seed)
         mujoco.mj_resetData(self.model, self.data)

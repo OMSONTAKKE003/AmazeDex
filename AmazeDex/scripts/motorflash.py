@@ -3,7 +3,7 @@ import numpy as np
 
 from rustypot import Scs0009PyController
 
-# Change this to the IDs you want to test
+# Servo IDs
 IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 # Middle position (degrees)
@@ -30,7 +30,6 @@ def main():
         open_servo()
         time.sleep(2)
 
-        # Uncomment if you want to read the current position
         for ID in IDS:
              pos = c.read_present_position(ID)
              print(f"ID {ID} Position: {np.rad2deg(pos):.2f}°")

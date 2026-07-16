@@ -14,6 +14,7 @@ ACTUATOR_NAMES = [
     "motor_finger3_1", "motor_finger3_2",
     "motor_finger4_1", "motor_finger4_2",
 ]
+
 JOINT_NAMES = [
     "finger1_motor1", "finger1_motor2",
     "finger2_motor1", "finger2_motor2",
@@ -29,7 +30,7 @@ MAX_STEPS = 500
 # Shrink the camera's usable field of view a bit so "cube near the edge of
 # frame" already counts as lost, before it's actually clipped out of the
 # image. 1.0 = full FOV, lower = more conservative.
-FOV_MARGIN = 0.7
+FOV_MARGIN = 1
 
 
 class AmazeDexCubeEnv(MujocoEnv):
@@ -57,7 +58,7 @@ class AmazeDexCubeEnv(MujocoEnv):
 
     def __init__(
         self,
-        model_path: str = os.path.join("my-robot", "scene.xml"),
+        model_path: str = os.path.join("resources", "scene.xml"),
         render_mode: str | None = None,
     ):
         super().__init__(model_path, FRAME_SKIP, render_mode)

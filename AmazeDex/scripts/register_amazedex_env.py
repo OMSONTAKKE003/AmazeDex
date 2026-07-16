@@ -22,7 +22,7 @@ if __name__ == "__main__":
     # but now going through gym.make instead of instantiating the class directly.
     env = gym.make("AmazeDex/CubeRotate-v0", render_mode="human")
 
-    for episode in range(1000):
+    for episode in range(100):
         obs, info = env.reset(seed=episode)
         total_reward = 0.0
         terminated = truncated = False

@@ -4,3 +4,8 @@ This project aims to train a multi fingered robotic hand to autonomously rotate 
 
 
 The robot receives information about the object’s current orientation and target orientation and learns finger movements that gradually align the object with the target pose. The training is performed entirely in a simulated environment, where the agent learns through trial and error by maximizing rewards based on orientation accuracy and grasp stability. The project demonstrates the application of deep reinforcement learning for dexterous manipulation and highlights the challenges of controlling multi-finger robotic systems for complex in hand manipulation and deploying it on hardware
+
+## Folder Structure
+
+* **`resources`**: all the assets and xml files
+* **`scripts`**: all scripts
