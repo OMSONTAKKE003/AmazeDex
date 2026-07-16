@@ -7,5 +7,5 @@ The robot receives information about the object’s current orientation and targ
 
 ## Folder Structure
 
-* **`resources`**: all the assets and xml files
-* **`scripts`**: all scripts
+* **`AmazeDex`**: all the rescources and scripts
+* **`RLPractice`**: all practice scripts
