@@ -1,6 +1,6 @@
 # Amaze Dex
 
-This repository contains the MuJoCo XML simulation files for the scripts
+This repository contains the MuJoCo XML simulation files for the scripts and all assets files in asset subfolder
 
 
 
