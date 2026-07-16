@@ -4,7 +4,7 @@
 <!-- njmax/nconmax raised: the hand has ~30 bodies with several ball/hinge
      joints each, so self-contact + equality-constraint counts during a
      messy grasp can exceed the old limits (500/200). Hitting that limit is
-     a *fatal* MuJoCo error that kills the whole Python process instantly -->
+     a *fatal* MuJoCo error that kills the whole Python process instantly 
      this is the most likely cause of "runs a few episodes then crashes". -->
 <size njmax="3000" nconmax="1000"/>
     <visual>
@@ -29,14 +29,14 @@
         <light pos="0 0 3.5" dir="0 0 -1" directional="true" />
         <geom name="floor" size="0 0 0.05" pos="0 0 -0.2" type="plane" material="groundplane" />
         
-        <body name="cube" pos="-0.11 0.015 0.1">
+        <body name="cube" pos="-0.07 0.023 0.07">
     <freejoint name ="cube_joint"/>
 
     <geom
         type="mesh"
         mesh="cube_mesh"
         size="0.02 0.02 0.02"
-        mass="0.05"
+        mass="0.071"
         contype="5"
         conaffinity="5"
         rgba="1 1 1 1"/>
@@ -45,6 +45,6 @@
 
     </worldbody>
      <worldbody>
-    <camera name="tracking_camera" pos="-0.05 -0.7 0.5" euler="45 0 270" fovy="45" />
+    <camera name="tracking_camera" pos="0.070 -0.136 0.202" xyaxes="0.743 0.670 0.000 -0.472 0.524 0.709" fovy="45"/>
 </worldbody>
 </mujoco>

@@ -40,14 +40,14 @@ def main():
 def close_servo():
     pos = np.deg2rad(MiddlePos + 90)
     for ID in IDS:
-        c.write_goal_speed(ID, 6)  # Max speed
+        c.write_goal_speed(ID, 1)  # Max speed
         c.write_goal_position(ID, pos)
 
 
 def open_servo():
     pos = np.deg2rad(MiddlePos - 30)
     for ID in IDS:
-        c.write_goal_speed(ID, 6)  # Max speed
+        c.write_goal_speed(ID, 1)  # Max speed
         c.write_goal_position(ID, pos)
 
 

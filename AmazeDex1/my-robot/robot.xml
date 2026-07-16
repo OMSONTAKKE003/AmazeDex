@@ -4,7 +4,7 @@
   <default>
     <default class="my-robot">
       <joint frictionloss="0.1" armature="0.005"/>
-      <position kp="50" dampratio="1"/>
+      <position kp="20" dampratio="2"/>
       <default class="visual">
         <geom type="mesh" contype="1" conaffinity="2" group="2"/>
       </default>
