@@ -8,4 +8,5 @@ The robot receives information about the object’s current orientation and targ
 ## Folder Structure
 
 * **`AmazeDex`**: all the rescources and scripts
-* **`RLPractice`**: all practice scripts
+* **`RLPractice`**: all practice scripts  
+* **`requirements`**: all necessarry libraries that need to be installed

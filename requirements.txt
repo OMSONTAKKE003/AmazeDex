@@ -1,0 +1,6 @@
+gymnasium
+mujoco
+numpy
+opencv-python
+pytesseract
+rustypot
