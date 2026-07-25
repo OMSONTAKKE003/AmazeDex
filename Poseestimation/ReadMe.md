@@ -1,6 +1,6 @@
 # Amaze Dex
 
-This repository contains the MuJoCo XML simulation files for the scripts and all assets files in asset subfolder
+This Folder contains the the scripts used for pose estimation 
 
 
 
@@ -11,3 +11,4 @@ This repository contains the MuJoCo XML simulation files for the scripts and all
 
 * **`joint_properties`**: Contains all joint properties  
 * **`joint_properties`**: Contains all the required stl files and part files
+* **`Detector.py`**:This is  the main detector fille
