@@ -43,7 +43,7 @@ CURL_THRESHOLD = 0.75
 
 @dataclass
 class GestureResult:
-    label: str  # "rock" | "paper" | "scissors" | "unknown"
+    label: str
     confidence: float  # fraction of the 4 fingers matching the closest gesture
     finger_curled: dict  # {"index": bool, ...}
     joint_targets: np.ndarray  # shape (8,), matches JOINT_NAMES order
@@ -51,14 +51,7 @@ class GestureResult:
 
 
 def _finger_curl_ratio(landmarks, finger: str) -> float:
-    """Ratio in [~0, ~1]: 1.0 = straight/extended, lower = curled.
-
-    Computed as (straight-line wrist->tip distance) / (sum of the three
-    inter-joint segment lengths wrist->mcp->pip->tip). For a fully straight
-    finger these are equal (ratio ~1). A curled finger's tip folds back
-    toward the wrist, shrinking the straight-line distance while the segment
-    lengths stay ~constant, so the ratio drops well below 1.
-    """
+   
     mcp_i, pip_i, dip_i, tip_i = FINGER_LANDMARKS[finger]
     wrist = np.array([landmarks[WRIST].x, landmarks[WRIST].y, landmarks[WRIST].z])
     mcp = np.array([landmarks[mcp_i].x, landmarks[mcp_i].y, landmarks[mcp_i].z])
@@ -95,9 +88,6 @@ def classify_gesture(landmarks) -> GestureResult:
         for finger, (lo, hi) in FINGER_TO_JOINT_SLICE.items():
             joint_targets[lo:hi] = CURLED if expected[finger] else EXTENDED
     else:
-        # No confident label: fall back to the *measured* per-finger state
-        # rather than a fixed gesture, so downstream code still gets a
-        # usable (if noisier) 8-dim vector.
         for finger, (lo, hi) in FINGER_TO_JOINT_SLICE.items():
             joint_targets[lo:hi] = CURLED if curled[finger] else EXTENDED
 

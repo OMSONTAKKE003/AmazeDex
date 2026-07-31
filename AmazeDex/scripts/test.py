@@ -22,26 +22,20 @@ from torchvision import transforms
 import torchvision.models as models
 
 
-# ======================================================================
-# 0. HARDCODED / DEFAULT SETTINGS (all overridable via CLI flags below)
-# ======================================================================
 
 DEFAULT_MODEL_PATH = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\face_cnn.pt"
 DEFAULT_SCENE_PATH = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\resources\scene.xml"
 
-IMG_SIZE    = 224     # CNN input size (must match training)
-CONF_THRESH = 0.45    # min softmax confidence to accept a per-face number
-ENTROPY_MAX = 1.1     # reject if the model is uncertain across classes
-VOTE_WINDOW = 4        # frames kept per-face for temporal smoothing
-VOTE_MIN    = 3       # min agreeing frames required to lock a face's number
+IMG_SIZE    = 224    
+CONF_THRESH = 0.45    
+ENTROPY_MAX = 1.1     
+VOTE_WINDOW = 4        
+VOTE_MIN    = 3     
 
-TAG_SIZE_M = 0.010   # physical printed tag size in meters (full square,
-                      # matches the 0.005 half-size geom in scene.xml).
-                      # *** For real-world use, print tags at EXACTLY
-                      # this size, or override with --tag-size. ***
+TAG_SIZE_M = 0.010  
 
-CUBE_CENTER_LOCAL = np.array([0.0, -0.035, 0.0])   # from scene.xml comment:
-CUBE_HALF_SIZE = 0.025                              # cube.stl bbox center/half-extent
+CUBE_CENTER_LOCAL = np.array([0.0, -0.035, 0.0])   
+CUBE_HALF_SIZE = 0.025                             
 
 ARUCO_DICT_NAME = "DICT_APRILTAG_36H11"
 
@@ -52,10 +46,10 @@ DEFAULT_CAM_UP_IN_CAM_FRAME = np.array([0.0, -1.0, 0.0])
 class TagFace:
     tag_id: int
     name: str
-    axis: int              # 0=x, 1=y, 2=z  (which local axis is the face normal)
-    sign: int               # +1 or -1 along that axis
-    pos: np.ndarray          # tag geom pos, local to the "cube" body frame
-    quat_wxyz: np.ndarray     # tag geom quat, local to the "cube" body frame
+    axis: int              
+    sign: int            
+    pos: np.ndarray    
+    quat_wxyz: np.ndarray    
 
 
 TAG_FACE_INFO: Dict[int, TagFace] = {
@@ -80,10 +74,6 @@ TAG_FACE_INFO: Dict[int, TagFace] = {
 }
 
 
-# ======================================================================
-# 1b. STARTUP SELF-CHECK: TAG_FACE_INFO vs the live scene.xml on disk
-# ======================================================================
-
 _GEOM_RE = re.compile(
     r'<geom\s+name="tag_number_(\d+)"[^>]*?\bpos="([^"]+)"'
     r'(?:[^>]*?\bquat="([^"]+)")?[^>]*?/?>',
@@ -93,11 +83,7 @@ _GEOM_RE = re.compile(
 
 def verify_tag_geometry_against_scene(scene_path: str, pos_tol: float = 1e-4,
                                        quat_tol: float = 1e-3) -> bool:
-    """Parses tag_number_N geoms out of scene.xml and diffs them against
-    TAG_FACE_INFO. Prints a clear report. Returns True iff everything
-    matches (or the scene file can't be found/parsed, in which case it
-    warns and returns True so this never blocks running in real mode
-    without a scene file)."""
+
     print("[SELF-CHECK] Verifying TAG_FACE_INFO against scene.xml ...")
 
     if not scene_path or not os.path.exists(scene_path):
@@ -148,10 +134,7 @@ def verify_tag_geometry_against_scene(scene_path: str, pos_tol: float = 1e-4,
               "Continuing anyway, but treat pose output with suspicion.")
     return all_ok
 
-
-# ======================================================================
-# 2. MATH UTILITIES  (no scipy dependency -> fewer ways to break)
-# ======================================================================
+=
 
 def quat_wxyz_to_R(q: np.ndarray) -> np.ndarray:
     q = q / (np.linalg.norm(q) + 1e-12)
@@ -235,10 +218,6 @@ def average_rotations_weighted(rots: List[np.ndarray], weights: List[float]) -> 
     return R_avg
 
 
-# ======================================================================
-# 3. CNN LOADING (identical checkpoint format to cube_face_cnn_detector.py)
-# ======================================================================
-
 def load_model(model_path: str, device: torch.device):
     if not os.path.exists(model_path):
         raise FileNotFoundError(f"CNN checkpoint not found at: {model_path}")
@@ -276,10 +255,6 @@ def classify_face_crop(model, classes, device, bgr_crop: np.ndarray):
     return classes[pred_idx.item()], conf.item(), entropy, probs.cpu().numpy()
 
 
-# ======================================================================
-# 4. ARUCO / APRILTAG DETECTION  (new + old cv2.aruco API supported)
-# ======================================================================
-
 class TagDetector:
     def __init__(self, dict_name: str = ARUCO_DICT_NAME):
         if not hasattr(cv2, "aruco"):
@@ -312,9 +287,6 @@ class TagDetector:
             return [], None
 
 
-# ======================================================================
-# 5. CAMERA SOURCES  (real webcam OR MuJoCo tracking_camera render)
-# ======================================================================
 
 class CameraIntrinsics:
     def __init__(self, camera_matrix: np.ndarray, dist_coeffs: np.ndarray, width: int, height: int):
@@ -325,10 +297,7 @@ class CameraIntrinsics:
 
 
 class RealCameraSource:
-    """Physical webcam. Provide a calibration file for accurate metric pose;
-    otherwise a reasonable default intrinsic guess is used (orientation will
-    still be roughly right, but absolute distances will not be exact).
-    Auto-reconnects with backoff if the camera drops a frame."""
+
 
     def __init__(self, camera_index: int, calib_path: Optional[str] = None,
                  width: int = 1280, height: int = 720):
@@ -387,8 +356,6 @@ class RealCameraSource:
 
 
 class MuJoCoCameraSource:
-    """Renders scene.xml's `tracking_camera` offscreen every frame and steps
-    physics so the cube behaves dynamically (falls, settles, can be nudged)."""
 
     def __init__(self, scene_path: str, width: int = 960, height: int = 720,
                  camera_name: str = "tracking_camera", step_physics: bool = True):
@@ -451,9 +418,6 @@ class MuJoCoCameraSource:
         pass
 
 
-# ======================================================================
-# 6. CUBE POSE ESTIMATION FROM DETECTED TAGS
-# ======================================================================
 
 def _tag_object_points(tag_size: float) -> np.ndarray:
     s = tag_size / 2.0
@@ -467,8 +431,8 @@ def _tag_object_points(tag_size: float) -> np.ndarray:
 
 @dataclass
 class CubePoseEstimate:
-    R: np.ndarray            # cube orientation in camera frame
-    t: np.ndarray            # cube position in camera frame (meters)
+    R: np.ndarray            
+    t: np.ndarray           
     n_tags_used: int
     per_tag_area: Dict[int, float] = field(default_factory=dict)
 
@@ -530,14 +494,8 @@ def estimate_cube_pose(corners_list, ids, intr: CameraIntrinsics,
     return CubePoseEstimate(R=R_fused, t=t_fused, n_tags_used=len(cand_R), per_tag_area=per_tag_area)
 
 
-# ======================================================================
-# 7. FACE-QUAD REPROJECTION + CNN NUMBER READING
-# ======================================================================
-
 def face_corners_local(axis: int, sign: int) -> np.ndarray:
-    """4 corners (CCW as viewed from outside the cube) of a cube face in the
-    cube-body local frame, ordered so they map consistently to a canonical
-    square image (BL, BR, TR, TL)."""
+ 
     n = axis
     u_axis = (n + 1) % 3
     v_axis = (n + 2) % 3
@@ -547,7 +505,7 @@ def face_corners_local(axis: int, sign: int) -> np.ndarray:
         p = CUBE_CENTER_LOCAL.copy()
         p[n] += sign * h
         p[u_axis] += u_val
-        p[v_axis] += sign * v_val   # flip v with sign to keep outward winding CCW
+        p[v_axis] += sign * v_val   
         return p
 
     return np.array([
@@ -584,11 +542,6 @@ def warp_face_crop(frame: np.ndarray, img_quad: np.ndarray, out_size: int) -> Op
         return None
     return crop
 
-
-# ======================================================================
-# 8. FACE MEMORY / TEMPORAL SMOOTHING + TERMINAL DETECTION LOG
-# ======================================================================
-
 class FaceMemory:
     """Per-tag temporal smoothing of CNN number predictions, keyed by tag id
     (since each physical face has a fixed, unchanging number)."""
@@ -616,11 +569,7 @@ class FaceMemory:
 
 
 class DetectionAnnouncer:
-    """Prints to the terminal whenever the 'up' face or 'front-facing' face's
-    resolved number changes, e.g.:
-        [DETECT] UP    face -> tag5 top(+Z)   = 5
-        [DETECT] FRONT face -> tag3 front(+Y) = 2
-    """
+  
 
     def __init__(self):
         self._last_up: Optional[Tuple[int, Optional[str]]] = None
@@ -642,10 +591,6 @@ class DetectionAnnouncer:
         setattr(self, attr, current)
 
 
-# ======================================================================
-# 9. UP-FACE / FRONT-FACE (FACING CAMERA) DETERMINATION
-# ======================================================================
-
 def determine_up_face(pose: CubePoseEstimate, up_in_cam: np.ndarray) -> int:
     """Which of the 6 canonical faces has its outward normal most aligned
     with the given 'up' direction (expressed in camera frame)."""
@@ -662,10 +607,6 @@ def determine_up_face(pose: CubePoseEstimate, up_in_cam: np.ndarray) -> int:
 
 
 def determine_front_face(pose: CubePoseEstimate) -> int:
-    """Which of the 6 canonical faces is pointing most directly back at the
-    camera -- i.e. the face you're actually looking at ("what the front
-    camera sees"). Camera looks down +Z in OpenCV convention, so the face
-    facing the camera has outward normal most aligned with -Z (cam frame)."""
     cam_forward_from_face = np.array([0.0, 0.0, -1.0])
     best_tid, best_dot = None, -2.0
     for tid, face in TAG_FACE_INFO.items():
@@ -679,9 +620,6 @@ def determine_front_face(pose: CubePoseEstimate) -> int:
     return best_tid
 
 
-# ======================================================================
-# 10. HUD RENDERING
-# ======================================================================
 
 def draw_hud(pose: Optional[CubePoseEstimate], face_conf: Dict[int, Tuple[Optional[str], float]],
              memory: FaceMemory, up_face_id: Optional[int], front_face_id: Optional[int],
@@ -741,10 +679,6 @@ def draw_hud(pose: Optional[CubePoseEstimate], face_conf: Dict[int, Tuple[Option
     return hud
 
 
-# ======================================================================
-# 11. ARGPARSE
-# ======================================================================
-
 def parse_args():
     p = argparse.ArgumentParser(description="Cube AprilTag pose + CNN number detector (sim2real)")
     p.add_argument("--mode", choices=["sim", "real"], default="sim")
@@ -769,11 +703,6 @@ def parse_args():
                          "with prediction/confidence/full-probability-vector printed to the "
                          "terminal. Use this to diagnose misaligned crops or unexpected classes.")
     return p.parse_args()
-
-
-# ======================================================================
-# 12. MAIN
-# ======================================================================
 
 def main():
     args = parse_args()

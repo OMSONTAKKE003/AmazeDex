@@ -20,15 +20,13 @@ class MujocoEnv(gym.Env):
 
         self._viewer = None
         self._renderer = None
-        self._cam_renderer = None  # separate small renderer used for OCR checks
+        self._cam_renderer = None 
 
    
     def reset_model(self) -> None:
-        """Set self.data.qpos / qvel for a new episode."""
         raise NotImplementedError
 
     def _get_obs(self) -> np.ndarray:
-        """Build the observation from self.data."""
         raise NotImplementedError
 
     # Gymnasium API 
@@ -49,9 +47,7 @@ class MujocoEnv(gym.Env):
         for _ in range(n_frames):
             mujoco.mj_step(self.model, self.data)
 
-   # Line 61: The function definition
     def render(self):
-        # Line 62: Indented by 4 spaces
         if self.render_mode == "human":
             if self._viewer is None:
                 self._viewer = mujoco.viewer.launch_passive(self.model, self.data)
@@ -77,12 +73,7 @@ class MujocoEnv(gym.Env):
         return None
 
     def render_camera_frame(self, camera_id: int, width: int = 240, height: int = 240) -> np.ndarray:
-        """Render an RGB frame from a specific camera.
 
-        Independent of render_mode/self.render() -- this needs to work every
-        step (e.g. for the OCR-based "is the cube visible" check) even when
-        training with render_mode=None.
-        """
         if self._cam_renderer is None:
             self._cam_renderer = mujoco.Renderer(self.model, height=height, width=width)
         self._cam_renderer.update_scene(self.data, camera=camera_id)

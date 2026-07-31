@@ -1,10 +1,3 @@
-"""Register AmazeDexRockPaperScissorsEnv so it can be created with gym.make(...).
-
-Minimal addition on top of the existing files -- no changes needed to
-mujoco_env.py or amazedex_rps_env.py. Just import this module (or run it)
-before calling gym.make.
-"""
-
 import gymnasium as gym
 import numpy as np
 
@@ -18,8 +11,6 @@ gym.register(
 
 
 if __name__ == "__main__":
-    # Quick smoke test, same shape as the __main__ block in
-    # register_amazedex_env.py, but for the RPS env.
     env = gym.make("AmazeDex/RockPaperScissors-v0", render_mode="human")
 
     for episode in range(100):
@@ -32,8 +23,6 @@ if __name__ == "__main__":
         high = env.action_space.high
 
         while not (terminated or truncated):
-            # Simple oscillating action, just to see the hand move in the
-            # viewer -- swap this out for a trained policy.
             action = low + (np.sin(steps / 20.0) * 0.5 + 0.5) * (high - low)
             obs, reward, terminated, truncated, info = env.step(action)
             total_reward += reward

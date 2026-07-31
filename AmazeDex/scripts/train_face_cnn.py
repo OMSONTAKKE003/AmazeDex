@@ -61,34 +61,29 @@ import torch.nn.functional as F
 from torch.utils.data import DataLoader, Dataset, WeightedRandomSampler
 from torchvision import transforms, models
 
-# ==========================================
-# 0. HARDCODED PATHS & CONFIGURATION
-# ==========================================
 CSV_PATH  = r"C:\Users\luvja\Desktop\updatedwithstand\dataset\labels.csv"
 IMG_DIR   = r"C:\Users\luvja\Desktop\updatedwithstand\dataset\images"
 SAVE_PATH = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\face_cnn.pt"
 
 IMG_SIZE      = 224
-BATCH_SIZE    = 128 if torch.cuda.is_available() else 32  # Adaptive batch sizing
+BATCH_SIZE    = 128 if torch.cuda.is_available() else 32 
 EPOCHS        = 40
 LR            = 3e-4
 WEIGHT_DECAY  = 1e-4
 VAL_SPLIT     = 0.15
-NUM_WORKERS   = 0      # 0 for Windows CUDA multiprocessing stability
+NUM_WORKERS   = 0      
 SEED          = 42
 LABEL_SMOOTH  = 0.05
-MAX_GRAD_NORM = 5.0    # Gradient clipping threshold
+MAX_GRAD_NORM = 5.0    
 
-MIN_SAMPLES_PER_CLASS_WARN = 20  # warn if any class has fewer than this
+MIN_SAMPLES_PER_CLASS_WARN = 20  
 
-# Early Stopping & Delta Accuracy Threshold
-PATIENCE         = 7      # N consecutive epochs allowed without threshold gain
-ACC_DELTA_THRESH = 0.001  # Minimum accuracy gain required (0.1%)
+PATIENCE         = 7   
+ACC_DELTA_THRESH = 0.001 
 
 USE_PRETRAINED_BACKBONE = True
 FREEZE_BACKBONE_EPOCHS  = 3
 
-# Photometric / Domain Randomization Parameters
 BG_SWAP_PROB     = 0.6
 NOISE_PROB       = 0.5
 JPEG_PROB        = 0.4
@@ -97,7 +92,6 @@ MOTION_BLUR_PROB = 0.3
 IMAGENET_MEAN = [0.485, 0.456, 0.406]
 IMAGENET_STD  = [0.229, 0.224, 0.225]
 
-# Hardware Acceleration Setup (TF32 + cuDNN Benchmark)
 random.seed(SEED)
 np.random.seed(SEED)
 torch.manual_seed(SEED)
@@ -108,9 +102,6 @@ if torch.cuda.is_available():
     torch.backends.cudnn.allow_tf32 = True
 
 
-# ==========================================
-# 1. MODEL ARCHITECTURE
-# ==========================================
 def build_model(num_classes: int, pretrained: bool = True) -> nn.Module:
     weights = models.MobileNet_V3_Small_Weights.IMAGENET1K_V1 if pretrained else None
     model = models.mobilenet_v3_small(weights=weights)
@@ -124,9 +115,6 @@ def set_backbone_trainable(model: nn.Module, trainable: bool):
         param.requires_grad = trainable
 
 
-# ==========================================
-# 2. DOMAIN RANDOMIZATION TRANSFORMS
-# ==========================================
 class RandomBackgroundSwap:
     def __init__(self, prob=0.6, tolerance=28, feather=3):
         self.prob, self.tolerance, self.feather = prob, tolerance, feather
@@ -203,14 +191,7 @@ def center_square_crop_pil(img: Image.Image) -> Image.Image:
     return img.crop((left, top, left + side, top + side))
 
 
-# ==========================================
-# 3. DATASET & DATALOADERS
-# ==========================================
 def _sort_classes(raw_labels):
-    """Numeric labels sorted numerically, any non-numeric labels (e.g.
-    'unknown') appended afterward in alphabetical order. Avoids silently
-    falling back to a pure alphabetical sort for the whole label set just
-    because one label isn't numeric (which would misorder e.g. 1,10,2,3...)."""
     numeric, non_numeric = [], []
     for v in raw_labels:
         try:
@@ -238,12 +219,6 @@ class CubeCSVDataset(Dataset):
 
 
 class IndexSubset(Dataset):
-    """indices are DataFrame INDEX VALUES (from base.df.index[...]), not
-    positional row numbers -- so lookups must use .loc, not .iloc. Using
-    .iloc here would silently misalign images and labels the moment the
-    DataFrame's index isn't a plain 0..N-1 RangeIndex (e.g. after
-    filtering, concatenating CSVs, or dropping rows upstream)."""
-
     def __init__(self, base_dataset, indices, transform):
         self.base, self.indices, self.transform = base_dataset, indices, transform
 
@@ -251,8 +226,6 @@ class IndexSubset(Dataset):
         return len(self.indices)
 
     def __getitem__(self, i):
-        # Try the requested sample; on a corrupt/missing file, fall back to
-        # the next sample in this subset instead of crashing the whole run.
         n = len(self.indices)
         for attempt in range(n):
             idx = self.indices[(i + attempt) % n]
@@ -337,10 +310,6 @@ def get_data_loaders(csv_file, img_dir, crop_size, batch_size, val_split, num_wo
 
     return train_loader, val_loader, base_dataset.classes, counts
 
-
-# ==========================================
-# 4. EVALUATION & CONFIDENCE MONITORING
-# ==========================================
 def evaluate(model, loader, device, num_classes):
     model.eval()
     confusion = np.zeros((num_classes, num_classes), dtype=np.int64)
@@ -378,9 +347,6 @@ def print_confusion(confusion, classes):
         print(f"  {cls_name:>7} " + " ".join(f"{v:7d}" for v in row) + f"   acc={acc:5.1f}%")
 
 
-# ==========================================
-# 5. MAIN TRAINING LOOP
-# ==========================================
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"--> Using compute device: {device}")

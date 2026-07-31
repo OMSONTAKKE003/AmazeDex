@@ -17,9 +17,9 @@ c = Scs0009PyController(
 
 
 def main():
-    # Enable torque
+
     for ID in IDS:
-        c.write_torque_enable(ID, 1)  # 1 = On
+        c.write_torque_enable(ID, 1)  
 
     while True:
         print(f"Testing Servos {IDS} - Close")

@@ -8,15 +8,11 @@ import torch.nn.functional as F
 import torchvision.models as models
 from torchvision import transforms
 
-# ==========================================
-# 1. CONFIGURATION & CALIBRATION PARAMETERS
-# ==========================================
 
-# Camera Intrinsic Parameters (Update for Real-world Camera or MuJoCo Render)
-FX = 600.0  # Focal length X
-FY = 600.0  # Focal length Y
-CX = 320.0  # Principal point X
-CY = 240.0  # Principal point Y
+FX = 600.0  
+FY = 600.0 
+CX = 320.0  
+CY = 240.0 
 
 CAMERA_MATRIX = np.array([
     [FX, 0, CX],
@@ -24,23 +20,21 @@ CAMERA_MATRIX = np.array([
     [0,  0,  1]
 ], dtype=np.float32)
 
-DIST_COEFFS = np.zeros((4, 1), dtype=np.float32)  # Assume zero distortion for simulation
+DIST_COEFFS = np.zeros((4, 1), dtype=np.float32)  
 
-# Cube Tag Dimensions & Settings
-TAG_SIZE = 0.04  # AprilTag physical size in meters (4cm)
+
+TAG_SIZE = 0.04 
 APRILTAG_DICT_TYPE = cv2.aruco.DICT_APRILTAG_36h11
 
-# Rotation Calibration (Angle in degrees to make ROI upright for CNN)
 TAG_ROTATION_OFFSETS = {
     0: 0,
     1: 0,
     2: 0,
     3: 0,
     4: 0,
-    5: 90  # Correct 90 degree rotation on face 5
+    5: 90  
 }
 
-# Mapping Tag IDs to Face Numbers 
 TAG_TO_FACE_MAP = {
     0: 6,
     1: 1,
@@ -50,19 +44,13 @@ TAG_TO_FACE_MAP = {
     5: 5
 }
 
-# Confidence threshold for CNN prediction
 CNN_CONFIDENCE_THRESHOLD = 0.60
 
-
-# ==========================================
-# 2. MODEL LOADER & DYNAMIC PREPROCESSING
-# ==========================================
+=
 
 def load_checkpoint_model(model_weights_path, device):
-    """Dynamically loads torchvision architecture and preprocessing specs from checkpoint."""
     checkpoint = torch.load(model_weights_path, map_location=device)
 
-    # Extract checkpoint metadata
     arch = checkpoint.get("arch", "mobilenet_v3_small")
     classes = checkpoint.get("classes", [0, 1, 2, 3, 4, 5, 6, 7, 8, 9])
     img_size = checkpoint.get("img_size", 224)
@@ -71,12 +59,10 @@ def load_checkpoint_model(model_weights_path, device):
 
     num_classes = len(classes)
 
-    # Instantiate model dynamically
     if hasattr(models, arch):
         model_fn = getattr(models, arch)
         model = model_fn(num_classes=num_classes)
     else:
-        # Default fallback to MobileNetV3 Small
         model = models.mobilenet_v3_small(num_classes=num_classes)
 
     # Load state dict key safely
@@ -106,10 +92,6 @@ def load_checkpoint_model(model_weights_path, device):
 
     return model, transform, classes
 
-
-# ==========================================
-# 3. POSE ESTIMATION & GEOMETRY HELPERS
-# ==========================================
 
 def rotation_matrix_to_euler_angles(R):
     """Converts 3x3 Rotation Matrix to Euler angles (Roll, Pitch, Yaw) in degrees."""
@@ -153,9 +135,6 @@ def extract_tag_roi(frame, corners):
     return warped
 
 
-# ==========================================
-# 4. MAIN PERCEPTION PIPELINE
-# ==========================================
 
 class Sim2RealCubeTracker:
     def __init__(self, model_weights_path=None):
@@ -170,7 +149,6 @@ class Sim2RealCubeTracker:
             self.parameters = cv2.aruco.DetectorParameters_create()
             self.legacy_aruco = True
 
-        # Device setup
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.cnn = None
 
@@ -213,7 +191,6 @@ class Sim2RealCubeTracker:
         return predicted_digit, confidence
 
     def process_frame(self, frame):
-        """Processes RGB video frame, detects tags, calculates orientation, and predicts top number."""
         output_frame = frame.copy()
         corners, ids = self.detect_tags(frame)
 
@@ -293,10 +270,6 @@ class Sim2RealCubeTracker:
 
         return output_frame
 
-
-# ==========================================
-# 5. EXECUTION ENTRY POINT (Sim / Camera)
-# ==========================================
 
 if __name__ == "__main__":
     SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

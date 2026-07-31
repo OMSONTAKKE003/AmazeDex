@@ -1,10 +1,3 @@
-"""
-cube_face_cnn_detector.py
-==========================
-Opens a webcam feed and predicts the die/number shown on the cube face in
-real time using the checkpoint produced by train_face_cnn.py.
-"""
-
 from collections import Counter, deque
 import os
 import time
@@ -17,9 +10,6 @@ import torch.nn.functional as F
 from torchvision import transforms
 import torchvision.models as models
 
-# ==========================================
-# 0. HARDCODED SETTINGS
-# ==========================================
 MODEL_PATH             = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\face_cnn.pt"
 CAMERA_INDEX           = 0
 IMG_SIZE               = 224
@@ -33,15 +23,10 @@ CROP_MARGIN            = 0.05   # Slight margin expansion (5%) to prevent cuttin
 USE_CLAHE              = False  # Set to False if training images were raw RGB without CLAHE
 
 
-# ==========================================
-# 1. FRAME PREPROCESSING HELPERS
-# ==========================================
-
 def center_square_crop(frame, output_size, margin=0.0):
     h, w, _ = frame.shape
     side = min(h, w)
     
-    # Expand crop slightly if margin > 0
     margin_px = int(side * margin)
     side_cropped = max(10, side - (2 * margin_px))
     
@@ -62,9 +47,6 @@ def apply_clahe(bgr_frame):
     return cv2.cvtColor(cv2.merge((l, a, b)), cv2.COLOR_LAB2BGR)
 
 
-# ==========================================
-# 2. MODEL LOADING
-# ==========================================
 
 def load_model(model_path, device):
     if not os.path.exists(model_path):
@@ -86,11 +68,7 @@ def load_model(model_path, device):
     model.eval()
     
     return model, classes
-
-
-# ==========================================
-# 3. MAIN INFERENCE LOOP
-# ==========================================
+ 
 
 def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

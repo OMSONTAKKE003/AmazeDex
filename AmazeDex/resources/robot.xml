@@ -559,11 +559,7 @@ size="0.0065"/>
     <material name="proximal_material" rgba="0.8 0.8 0.8 1"/>
   </asset>
   <actuator>
-    <!-- FIX: was <motor> (data.ctrl == raw torque in N*m, all kp/forcerange defaults below were
-         dead code because no <position> element ever referenced them). Every other script in this
-         project (amazedex_rps_env.py, sim2real_rps.py, HandInterface.send_ctrl) treats ctrl as a
-         TARGET JOINT ANGLE in radians and relies on internal PD tracking, matching the real STS3215
-         servo's onboard position-control firmware. <position> makes that assumption true in sim. -->
+    
     <position name="motor_finger1_1" joint="finger1_motor1" class="sts3215_147" ctrllimited="true" ctrlrange="-1.3962634 1.3962634"/>
     <position name="motor_finger1_2" joint="finger1_motor2" class="sts3215_147" ctrllimited="true" ctrlrange="-1.3962634 1.3962634"/>
     <position name="motor_finger2_1" joint="finger2_motor1" class="sts3215_147" ctrllimited="true" ctrlrange="-1.3962634 1.3962634"/>

@@ -1,10 +1,3 @@
-"""Register AmazeDexCubeEnv so it can be created with gym.make(...).
-
-Minimal addition on top of the existing files -- no changes needed to
-mujoco_env.py or amazedex_cube_env.py. Just import this module (or run it)
-before calling gym.make.
-"""
-
 import gymnasium as gym
 import numpy as np
 
@@ -13,16 +6,14 @@ from amazedex_cube_env import AmazeDexCubeEnv
 gym.register(
     id="AmazeDex/CubeRotate-v0",
     entry_point=AmazeDexCubeEnv,
-    max_episode_steps=500,  # matches MAX_STEPS in amazedex_cube_env.py
+    max_episode_steps=500, 
 )
 
 
 if __name__ == "__main__":
-    # Quick smoke test, same shape as the __main__ block in amazedex_cube_env.py,
-    # but now going through gym.make instead of instantiating the class directly.
     env = gym.make("AmazeDex/CubeRotate-v0", render_mode="human")
     
-    total_transition_steps = 500  # Sets speed of transition from max to min
+    total_transition_steps = 500  
 
     for episode in range(100):
         obs, info = env.reset(seed=episode)
@@ -33,10 +24,8 @@ if __name__ == "__main__":
         high = env.action_space.high
         
         while not (terminated or truncated):
-            # Calculate alpha (0.0 at start, 1.0 at max steps)
             alpha = min(steps / total_transition_steps, 1.0)
             
-            # Linearly interpolate from high to low
             action = (1 - alpha) * high + (alpha * low)
             
             obs, reward, terminated, truncated, info = env.step(action)

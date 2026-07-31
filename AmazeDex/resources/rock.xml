@@ -1,7 +1,6 @@
 <mujoco model="scene">
     <include file="robot.xml" />
     <option gravity="0 0 -9.81"/>
-    <!-- njmax/nconmax raised to prevent crashing during complex contact -->
     <size njmax="3000" nconmax="1000"/>
 
     <visual>

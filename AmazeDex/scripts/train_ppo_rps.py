@@ -23,7 +23,7 @@ def main() -> None:
     model = PPO(
         "MlpPolicy",
         train_env,
-        n_steps=512,       # Increased to allow the policy longer horizons to adapt to Domain Randomization
+        n_steps=512,      
         batch_size=256,
         n_epochs=10,
         gamma=0.99,

@@ -11,7 +11,6 @@ from mediapipe_rps_gesture import classify_gesture
 # Removed GESTURE_TARGETS and JOINT_NAMES if unused, kept GESTURE_NAMES just in case
 from amazedex_rps_env import GESTURE_NAMES 
 
-# --- must match amazedex_rps_env.py / robot.xml exactly ---
 CTRL_LOW, CTRL_HIGH = -1.4, 1.4
 SERVO_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 GOAL_SPEED = 0
@@ -24,8 +23,8 @@ HARDCODED_GESTURES = {
 COUNTER_GESTURE = {"rock": "paper", "paper": "scissors", "scissors": "rock"}
 
 STEPS_PER_REVEAL = 120
-CONTROL_DT = 0.02          # 50Hz, matches training frame_skip
-DETECT_WINDOW = 5         # frames to agree on before triggering a reveal
+CONTROL_DT = 0.02         
+DETECT_WINDOW = 5        
 
 class Hand:
     def __init__(self, port: str):

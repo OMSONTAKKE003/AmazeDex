@@ -6,7 +6,7 @@ import cv2
 import mujoco
 from tqdm import tqdm
 
-# --- Configuration Paths ---
+
 XML_PATH = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\resources\scene.xml"
 IMAGE_DIR = r"C:\Users\luvja\Desktop\updatedwithstand\dataset\images"
 OUTPUT_CSV = r"C:\Users\luvja\Desktop\updatedwithstand\dataset\labels.csv"
@@ -37,35 +37,31 @@ def _axis_sign_from_normal(normal: np.ndarray):
 
 FACE_AXIS_SIGN = {label: _axis_sign_from_normal(n) for label, n in FACE_NORMALS.items()}
 
-# --- Diversity knobs ---
+
 BASE_POS_CENTER = np.array([-0.07, 0.023, 0.07])
-BASE_POS_JITTER_XY = 0.012      # meters, randomizes hand/cube "anchor" per-sample (was fixed before)
+BASE_POS_JITTER_XY = 0.012      
 BASE_POS_JITTER_Z = 0.008
 
-POS_JITTER_XY = 0.0016           # was 0.015 -- wider spread of poses around the anchor
+POS_JITTER_XY = 0.0016      
 POS_JITTER_Z_MIN = 0.00
-POS_JITTER_Z_MAX = 0.03       # was 0.04
+POS_JITTER_Z_MAX = 0.03     
 
-WIGGLE_PROB = 0.60              # was 0.85 -- favor pure-random search more, for orientation diversity
-WIGGLE_ANGLE_MAX = 0.88          # was 0.6 -- allow bigger wiggles when we do reuse a known-good quat
+WIGGLE_PROB = 0.60              
+WIGGLE_ANGLE_MAX = 0.88       
 
-CAM_POS_JITTER = 0.004          # meters, small extrinsic perturbation (mounting/calibration tolerance)
-CAM_ANGLE_JITTER_DEG = 1.880      # degrees
+CAM_POS_JITTER = 0.004         
+CAM_ANGLE_JITTER_DEG = 1.880      
 
-FINGER_OCCLUSION_PROB = 0.5     # chance to randomize hand/finger joints away from "rest" per sample
+FINGER_OCCLUSION_PROB = 0.5  
 
-CUBE_CENTER_LOCAL = np.array([0.0, -0.035, 0.0])   # must match scene.xml / detector script
-CUBE_HALF_SIZE = 0.025                              # must match scene.xml / detector script
-CROP_OUT_SIZE = 256   # saved slightly larger than train_face_cnn.py's IMG_SIZE=224 so
+CUBE_CENTER_LOCAL = np.array([0.0, -0.035, 0.0])  
+CUBE_HALF_SIZE = 0.025                              
+CROP_OUT_SIZE = 256 
                    
 INCLUDE_HAND_EMPTY_UNKNOWN = False
 
 SAVE_DEBUG_FULL_SCENE = False
 
-
-# ==========================================
-# Quaternion / geometry helpers
-# ==========================================
 
 def quat_multiply(q1, q2):
     """Multiplies two quaternions [w, x, y, z]."""
@@ -87,9 +83,7 @@ def random_unit_quat():
 
 
 def face_scores(model, data, cube_body_id, cam_id):
-    """Returns dict {face_label: cos-angle score to camera}, same math used
-    everywhere else in this project (dot of world-frame face normal with the
-    cube->camera unit vector)."""
+ 
     body_xmat = data.xmat[cube_body_id].reshape(3, 3)
     cam_vec = data.cam_xpos[cam_id] - data.xpos[cube_body_id]
     cam_vec /= (np.linalg.norm(cam_vec) + 1e-8)
@@ -101,14 +95,10 @@ def face_scores(model, data, cube_body_id, cam_id):
 
 
 
-_MJ_TO_CV_AXIS_FLIP = np.diag([1.0, -1.0, -1.0])  # mujoco cam frame (x-right,y-up,
-                                                    # z-out-of-screen) -> OpenCV cam
-                                                    # frame (x-right,y-down,z-forward)
+_MJ_TO_CV_AXIS_FLIP = np.diag([1.0, -1.0, -1.0]) 
 
 
 def get_camera_matrix(model, cam_id, width, height):
-    """Same pinhole model cube_tag_pose_cnn_detector.py's MuJoCoCameraSource uses,
-    so a crop rectified here lines up with how the real detector would do it."""
     fovy_deg = float(model.cam_fovy[cam_id])
     fy = height / (2 * np.tan(np.radians(fovy_deg) / 2))
     fx = fy
@@ -118,12 +108,8 @@ def get_camera_matrix(model, cam_id, width, height):
 
 
 def get_cv_cube_pose(data, cam_id, cube_body_id):
-    """True cube pose in OpenCV camera-frame convention (x-right, y-down,
-    z-forward), computed from MuJoCo's ground-truth world-frame state. Call
-    this AFTER any camera jitter for the current frame has been applied
-    (and mj_forward'd), so it matches whatever was actually rendered."""
     cam_pos = data.cam_xpos[cam_id]
-    R_world_mjcam = data.cam_xmat[cam_id].reshape(3, 3)  # columns = mj cam axes in world
+    R_world_mjcam = data.cam_xmat[cam_id].reshape(3, 3) 
     R_mjcam_world = R_world_mjcam.T
     R_cvcam_world = _MJ_TO_CV_AXIS_FLIP @ R_mjcam_world
     t_cvcam_world = -R_cvcam_world @ cam_pos
@@ -137,9 +123,7 @@ def get_cv_cube_pose(data, cam_id, cube_body_id):
 
 
 def face_corners_local(axis: int, sign: int) -> np.ndarray:
-    """Identical to cube_tag_pose_cnn_detector.py's face_corners_local: the
-    4 true corners (CCW from outside) of a cube face in cube-body-local
-    coordinates, using the cube's real bounding box, not the tiny tag."""
+  
     n = axis
     u_axis, v_axis = (n + 1) % 3, (n + 2) % 3
     h = CUBE_HALF_SIZE
@@ -162,12 +146,7 @@ def project_face_points(pts_local, R_cvcam_cube, t_cvcam_cube, camera_matrix) ->
 
 
 def rectify_crop(bgr_img, img_quad, out_size: int):
-    """Perspective-warp img_quad (4 image-space corners) into a canonical
-    out_size x out_size square. Returns None for degenerate projections
-    (behind camera, off-frame, absurd scale) -- same guard as the
-    detector's warp_face_crop, so anything that WOULDN'T produce a usable
-    crop for the real detector is skipped here too, instead of being
-    saved as a bogus training image."""
+
     h, w = bgr_img.shape[:2]
     if not np.all(np.isfinite(img_quad)):
         return None
@@ -186,10 +165,7 @@ def rectify_crop(bgr_img, img_quad, out_size: int):
 
 
 def rectify_target_face(bgr_img, model, data, cam_id, cube_body_id, face_label, out_size):
-    """One-call convenience: ground-truth-rectify the crop for `face_label`
-    (a key of FACE_NORMALS/FACE_AXIS_SIGN) from the current sim state and
-    the already-rendered bgr_img. Returns None if the projection is
-    degenerate (e.g. the face ended up entirely off-frame)."""
+  
     axis, sign = FACE_AXIS_SIGN[face_label]
     camera_matrix = get_camera_matrix(model, cam_id, bgr_img.shape[1], bgr_img.shape[0])
     R_cvcam_cube, t_cvcam_cube = get_cv_cube_pose(data, cam_id, cube_body_id)
@@ -198,15 +174,8 @@ def rectify_target_face(bgr_img, model, data, cam_id, cube_body_id, face_label, 
     return rectify_crop(bgr_img, img_quad, out_size)
 
 
-# ==========================================
-# Hand / finger joint discovery + randomization
-# ==========================================
-
 def discover_finger_joints(model):
-    """Finds every joint whose name contains 'finger' (matches the naming
-    convention used throughout this project, e.g. finger1_motor1). Returns
-    (qpos_addrs, ranges) so we can randomize hand pose for occlusion
-    diversity without touching amazedex_cube_env.py's ACTUATOR_NAMES list."""
+ 
     qpos_adrs, ranges = [], []
     for j in range(model.njnt):
         name = mujoco.mj_id2name(model, mujoco.mjtObj.mjOBJ_JOINT, j)
@@ -214,7 +183,6 @@ def discover_finger_joints(model):
             adr = model.jnt_qposadr[j]
             jr = model.jnt_range[j]
             qpos_adrs.append(adr)
-            # Fall back to a generic +-60 deg range if the XML has no limit set
             if jr[0] == 0.0 and jr[1] == 0.0:
                 ranges.append((-1.0, 1.0))
             else:
@@ -223,9 +191,7 @@ def discover_finger_joints(model):
 
 
 def randomize_fingers(data, qpos_adrs, ranges, strength=1.0):
-    """strength in [0,1]: 0 = leave at rest, 1 = full random within joint
-    limits. Used both for mild partial-occlusion diversity and for the
-    'heavily occluded' unknown-class generator (strength close to 1)."""
+
     for adr, (lo, hi) in zip(qpos_adrs, ranges):
         rest = 0.0
         target = np.random.uniform(lo, hi)
@@ -236,10 +202,6 @@ def reset_fingers(data, qpos_adrs):
     for adr in qpos_adrs:
         data.qpos[adr] = 0.0
 
-
-# ==========================================
-# Camera + lighting jitter (per-sample domain randomization in sim)
-# ==========================================
 
 def jitter_camera(model, cam_id, base_pos, base_quat):
     dpos = np.random.uniform(-CAM_POS_JITTER, CAM_POS_JITTER, size=3)
@@ -279,9 +241,7 @@ def jitter_lighting(model):
         jitter = np.random.uniform(-0.15, 0.15, size=3)
         d2 = d + jitter
         model.light_dir[i] = d2 / (np.linalg.norm(d2) + 1e-8)
-# ==========================================
-# Post-render camera-realism augmentation
-# ==========================================
+
 
 def _motion_blur(img):
     ksize = np.random.choice([3, 5, 7, 9])
@@ -306,7 +266,6 @@ def _gamma(img):
     return cv2.LUT(img, table)
 
 def _white_balance(img):
-    # Tightened gain range from 0.85-1.15 to 0.97-1.03 to avoid obvious color casts
     gains = np.random.uniform(0.97, 1.03, size=3)
     out = img.astype(np.float32)
     for c in range(3):
@@ -345,9 +304,6 @@ def apply_camera_artifacts(bgr_img, heavy_blur=False):
     return img
 
 
-# ==========================================
-# Original pose-search (kept, lightly parameterized for wider diversity)
-# ==========================================
 def is_cube_centered_and_in_frame(model, data, cube_body_id, cam_id, img_w=512, img_h=512, margin=100):
     """
     Projects the 3D center of the cube into 2D pixel space and checks if 
@@ -360,7 +316,6 @@ def is_cube_centered_and_in_frame(model, data, cube_body_id, cam_id, img_w=512, 
     # Vector from camera to cube in camera's local coordinate frame
     p_cam = cam_mat.T @ (cube_pos - cam_pos)
     
-    # In MuJoCo camera convention: +X is right, +Y is up, -Z is view direction
     x_cam, y_cam, z_cam = p_cam[0], p_cam[1], -p_cam[2]
     
     # Reject if cube is behind camera or too close
@@ -379,10 +334,7 @@ def is_cube_centered_and_in_frame(model, data, cube_body_id, cam_id, img_w=512, 
 
 def find_valid_pose_for_target_face(model, data, target_face, base_pos, qpos_adr,
                                      cube_body_id, cam_id, last_known_quat=None):
-    """Same collision-guard + face-prominence-check pipeline as the original
-    script. Wider position jitter and less reliance on `last_known_quat` so
-    the accepted poses span a much larger part of SO(3), not many near-copies
-    of the same orientation."""
+
     for _ in range(2000):
         sample_pos = base_pos + np.array([
             np.random.uniform(-POS_JITTER_XY, POS_JITTER_XY),
@@ -424,14 +376,7 @@ def find_valid_pose_for_target_face(model, data, target_face, base_pos, qpos_adr
 
     return False, None
 
-
-# ==========================================
-# Unknown-class generators
-# ==========================================
-
 def gen_unknown_hand_or_empty(model, data, cube_jnt_id, finger_qpos, finger_ranges):
-    """Cube hidden underground; sometimes an empty scene, sometimes a bare
-    hand posed randomly (occludes nothing of a cube because there is none)."""
     qpos_adr = model.jnt_qposadr[cube_jnt_id]
     data.qpos[qpos_adr:qpos_adr+3] = [0, 0, -10.0]
     if np.random.rand() < 0.7:
@@ -443,8 +388,6 @@ def gen_unknown_hand_or_empty(model, data, cube_jnt_id, finger_qpos, finger_rang
 
 
 def gen_unknown_heavily_occluded(model, data, base_pos, qpos_adr, finger_qpos, finger_ranges):
-    """A cube IS present (any orientation), but fingers are driven to
-    near-closed / random-tight poses so most of it is covered."""
     sample_pos = base_pos + np.array([
         np.random.uniform(-POS_JITTER_XY, POS_JITTER_XY),
         np.random.uniform(-POS_JITTER_XY, POS_JITTER_XY),
@@ -460,10 +403,6 @@ def gen_unknown_heavily_occluded(model, data, base_pos, qpos_adr, finger_qpos, f
 
 def gen_unknown_edge_on_or_ambiguous(model, data, base_pos, qpos_adr, cube_body_id, cam_id,
                                       ambiguous=False):
-    """Searches for a pose where either (a) the best face is nearly edge-on
-    to the camera (low confidence for everyone), or (b) two faces are almost
-    tied for 'most visible' -- both are genuinely ambiguous views a
-    classifier should refuse rather than guess on."""
     for _ in range(1500):
         sample_pos = base_pos + np.array([
             np.random.uniform(-POS_JITTER_XY, POS_JITTER_XY),
@@ -515,10 +454,6 @@ def gen_unknown_leaving_frame(model, data, base_pos, qpos_adr):
     return True
 
 
-# ==========================================
-# Background plate (for the visibility check on numbered faces)
-# ==========================================
-
 def get_background_frame(model, data, renderer, cube_jnt_id, finger_qpos):
     qpos_adr = model.jnt_qposadr[cube_jnt_id]
     original_pos = data.qpos[qpos_adr:qpos_adr+3].copy()
@@ -537,9 +472,6 @@ def get_background_frame(model, data, renderer, cube_jnt_id, finger_qpos):
     return bg_img
 
 
-# ==========================================
-# Main
-# ==========================================
 
 def main():
     os.environ.pop('MUJOCO_GL', None)

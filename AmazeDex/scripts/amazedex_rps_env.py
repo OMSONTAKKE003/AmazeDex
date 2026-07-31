@@ -19,7 +19,6 @@ JOINT_NAMES = [
     "finger4_motor1", "finger4_motor2",
 ]
 
-# Matched to sim2real's 50Hz control loop (10 * 0.002s = 0.02s)
 FRAME_SKIP = 10
 MAX_STEPS = 200
 
@@ -55,13 +54,9 @@ class AmazeDexRockPaperScissorsEnv(MujocoEnv):
         self.joint_qpos_adr = np.array([self.model.joint(n).qposadr[0] for n in JOINT_NAMES])
         self.joint_dof_adr = np.array([self.model.joint(n).dofadr[0] for n in JOINT_NAMES])
 
-        # Base dynamics for Domain Randomization
         self.base_friction = self.model.dof_frictionloss.copy()
         self.base_damping = self.model.dof_damping.copy()
 
-        # Must match robot.xml's finger joint range exactly (was rounded to +/-1.39,
-        # a ~0.5% mismatch against the XML's +/-1.3962634 -- harmless on its own but
-        # inconsistent with the "same units everywhere" contract this pipeline relies on).
         self.ctrl_low = np.full(8, -1.3962634, dtype=np.float32)
         self.ctrl_high = np.full(8, 1.3962634, dtype=np.float32)
 
@@ -94,15 +89,11 @@ class AmazeDexRockPaperScissorsEnv(MujocoEnv):
             )
             start_pose = np.clip(start_pose, self.ctrl_low, self.ctrl_high)
             
-            # FIX: Set the motor controls, NOT the joint positions directly.
             self.data.ctrl[self.actuator_ids] = start_pose
             
-            # Step the simulation 100 times to let the linkages naturally 
-            # and safely settle into the starting pose without exploding.
             for _ in range(100):
                 mujoco.mj_step(self.model, self.data)
         else:
-            # If no random start, let the default pose settle gravity/linkages
             for _ in range(100):
                 mujoco.mj_step(self.model, self.data)
 
@@ -141,12 +132,9 @@ class AmazeDexRockPaperScissorsEnv(MujocoEnv):
     def step(self, action: np.ndarray):
         action = np.clip(action, -1.0, 1.0).astype(np.float32)
         
-        # Action Smoothing (EMA) to prevent overcurrent on real servos
         smoothed_action = 0.8 * action + 0.2 * self.prev_action
         target_angle = self.ctrl_low + (smoothed_action + 1.0) * 0.5 * (self.ctrl_high - self.ctrl_low)
 
-        # FIX: Only update the specific actuator IDs. 
-        # Do not zero out the rest of the control array in case MuJoCo needs them.
         self.data.ctrl[self.actuator_ids] = target_angle
         
         # Step simulation forward
