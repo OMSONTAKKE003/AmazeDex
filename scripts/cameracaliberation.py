@@ -1,26 +1,9 @@
-"""
-Camera calibration using a single printed AprilTag as the calibration target
--- an alternative to a checkerboard, useful if you already have printed tags
-and don't want to print/display a separate checkerboard pattern.
-
-How it works: cv2.calibrateCamera() just needs, for each captured image, a set
-of known 3D object points and their corresponding 2D image points. A checkerboard
-gives many such point pairs per image (one per internal corner). A single AprilTag
-gives 4 (its four corners), since you know its exact physical size. Fewer points
-per image means you need MORE images (and more varied angles/distances) than a
-checkerboard calibration to get a comparably accurate result -- aim for at least
-20-30 captures covering a wide range of tilts, distances, and screen positions.
-
-Controls:
-  SPACE - capture the current frame (only if a tag is currently detected)
-  q     - finish capturing and run calibration
-"""
 
 import cv2
 import numpy as np
 from pupil_apriltags import Detector
 
-TAG_SIZE = 0.01  # meters -- use your MEASURED value, not the nominal 1cm
+TAG_SIZE = 0.01  
 CAMERA_INDEX = 0
 
 detector = Detector(
@@ -33,8 +16,7 @@ detector = Detector(
     debug=0
 )
 
-# 3D coordinates of the tag's 4 corners in the tag's own local frame
-# (center at origin, tag lying flat in the XY plane, Z=0)
+
 half = TAG_SIZE / 2
 object_points_template = np.array([
     [-half,  half, 0],   # top-left

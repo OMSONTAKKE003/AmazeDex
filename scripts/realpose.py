@@ -1,13 +1,3 @@
-"""
-Real-camera single-tag AprilTag pose estimation -- use this to verify
-detection and pose output are sane BEFORE moving to the multi-tag cube setup.
-
-Requires calibration.npz (from either the checkerboard or AprilTag-based
-calibration script) in the same folder.
-
-Controls:
-  q - quit
-"""
 
 import cv2
 import numpy as np
@@ -17,7 +7,7 @@ import os
 
 # --- Config ---
 CAMERA_INDEX = 0
-TAG_SIZE = 0.01  # meters -- use your MEASURED tag edge length, not the nominal size
+TAG_SIZE = 0.01  
 FAMILY = "tag36h11"
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -26,7 +16,6 @@ CALIB_PATH = os.path.join(SCRIPT_DIR, "calibration.npz")
 if not os.path.exists(CALIB_PATH):
     raise FileNotFoundError(
         f"calibration.npz not found in {SCRIPT_DIR}. "
-        "Run a calibration script first (checkerboard or AprilTag-based)."
     )
 
 calib = np.load(CALIB_PATH)
@@ -59,12 +48,7 @@ if not cap.isOpened():
 print("\nPress 'q' to quit.")
 print("Detected pose prints below (position in meters, orientation as quaternion x,y,z,w).")
 
-# NOTE: distortion is corrected up front (undistort the frame), then detection
-# and pose estimation run on the undistorted image using the SAME camMatrix.
-# This is Option A from earlier -- undistort first, keep camMatrix consistent
-# for both undistortion and detection. Don't mix undistorted frames with the
-# raw (distorted) camera matrix, or vice versa -- that silently produces
-# subtly wrong poses.
+
 
 while True:
     ret, frame = cap.read()

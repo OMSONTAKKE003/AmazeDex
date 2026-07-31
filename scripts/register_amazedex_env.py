@@ -1,9 +1,3 @@
-"""Register AmazeDexCubeEnv so it can be created with gym.make(...).
-
-Minimal addition on top of the existing files -- no changes needed to
-mujoco_env.py or amazedex_cube_env.py. Just import this module (or run it)
-before calling gym.make.
-"""
 
 import gymnasium as gym
 import numpy as np
