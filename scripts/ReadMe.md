@@ -29,6 +29,14 @@ Below is a brief overview of the files included in this project:
 
 * **`register_amazedex_env.py`**: Registers the custom AmazeDex environment with Gymnasium to enable standard instantiation.
 
+* **`realpose.py`**:Contains the code  for 6D pose estimation in real.
+
+* **`cameracaliberation.py`**:Contains the script  for  camera  caliberatiion of  for april tags.
+
+* **`detector.py`**:Contains the code  for 6D pose estimation in mujoco.
+
+
+
 
 
 ---
