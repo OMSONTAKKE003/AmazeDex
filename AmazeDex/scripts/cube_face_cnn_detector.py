@@ -13,14 +13,14 @@ import torchvision.models as models
 MODEL_PATH             = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\face_cnn.pt"
 CAMERA_INDEX           = 0
 IMG_SIZE               = 224
-CONF_THRESH             = 0.45   # Minimum softmax confidence to accept a prediction
-ENTROPY_MAX            = 1.2    # Reject if the model is uncertain across classes
-VOTE_WINDOW            = 3      # Frames kept for temporal smoothing
-VOTE_MIN               = 3      # Min agreeing frames required to lock a prediction
+CONF_THRESH             = 0.45   
+ENTROPY_MAX            = 1.2    
+VOTE_WINDOW            = 3     
+VOTE_MIN               = 3    
 
-USE_CENTER_SQUARE_CROP = True   # Crop a square from the frame center before resizing
-CROP_MARGIN            = 0.05   # Slight margin expansion (5%) to prevent cutting off outer pips
-USE_CLAHE              = False  # Set to False if training images were raw RGB without CLAHE
+USE_CENTER_SQUARE_CROP = True   
+CROP_MARGIN            = 0.05   
+USE_CLAHE              = False 
 
 
 def center_square_crop(frame, output_size, margin=0.0):
