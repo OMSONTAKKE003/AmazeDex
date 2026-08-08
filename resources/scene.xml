@@ -65,29 +65,37 @@
             <!-- ===================== 6 face tags ===================== -->
 
             <!-- FACE: Top (+Z) — tag 5 — UNCHANGED, this was the original tag and its position is kept exactly as-is -->
+            <!-- White backing plate: same pos/orientation, wider in-plane, slightly thinner so the tag sticks out past it (no z-fighting). Gives the tag a white quiet-zone border for AprilTag detection. -->
+            <geom name="tag_backing_5" type="box" pos="-0.02 -0.035 0.025" size="0.0075 0.0075 0.00005" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_5" type="box" pos="-0.02 -0.035 0.025" size="0.005 0.005 0.0001" material="tag_mat_5" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
             <!-- Cube (from cube.stl bounding box): x in [-0.025,0.025], y in [-0.06,-0.01] (center -0.035), z in [-0.025,0.025] -->
             <!-- All 5 new tags placed in a corner of their face (both in-plane axes offset, not just one) so none read as centered -->
             <!-- FACE: Bottom (-Z) — tag 0 — no rotation needed (thin dimension already along local Z) -->
+            <geom name="tag_backing_0" type="box" pos="-0.02 -0.035 -0.025" size="0.0075 0.0075 0.00005" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_0" type="box" pos="-0.02 -0.035 -0.025" size="0.005 0.005 0.0001" material="tag_mat_0" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
             <!-- FACE: Right (+X) — tag 1 — rotated +90 deg about Y so the thin dimension (local Z) points along +X -->
+            <geom name="tag_backing_1" type="box" pos="0.025 -0.055 -0.0" size="0.0075 0.0075 0.00005" quat="0.7071068 0 0.7071068 0" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_1" type="box" pos="0.025 -0.055 -0.0" size="0.005 0.005 0.0001" quat="0.7071068 0 0.7071068 0" material="tag_mat_1" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
             <!-- FACE: Left (-X) — tag 2 — rotated -90 deg about Y so the thin dimension (local Z) points along -X -->
+            <geom name="tag_backing_3" type="box" pos="-0.025 -0.015 -0.0" size="0.0075 0.0075 0.00005" quat="0.7071068 0 -0.7071068 0" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_3" type="box" pos="-0.025 -0.015 -0.0" size="0.005 0.005 0.0001" quat="0.7071068 0 -0.7071068 0" material="tag_mat_2" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
             <!-- FACE: Front (+Y) — tag 3 — rotated -90 deg about X so the thin dimension (local Z) points along +Y -->
+            <geom name="tag_backing_4" type="box" pos="0.02 -0.01 -0.0" size="0.0075 0.0075 0.00005" quat="0.7071068 -0.7071068 0 0" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_4" type="box" pos="0.02 -0.01 -0.0" size="0.005 0.005 0.0001" quat="0.7071068 -0.7071068 0 0" material="tag_mat_4" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
             <!-- FACE: Back (-Y) — tag 4 — rotated +90 deg about X so the thin dimension (local Z) points along -Y -->
+            <geom name="tag_backing_2" type="box" pos="-0.02 -0.06 -0.0" size="0.0075 0.0075 0.00005" quat="0.7071068 0.7071068 0 0" rgba="1 1 1 1" contype="0" conaffinity="0"/>
             <geom name="tag_number_2" type="box" pos="-0.02 -0.06 -0.0" size="0.005 0.005 0.0001" quat="0.7071068 0.7071068 0 0" material="tag_mat_2" rgba="1 1 1 1" contype="0" conaffinity="0"/>
 
         </body>
     </worldbody>
 
     <worldbody>
-        <camera name="tracking_camera" pos="-0.133 -0.005 0.237" xyaxes="0.159 -0.987 0.000 0.968 0.156 0.197"/>
+        <camera name="tracking_camera" pos="-0.276 0.149 0.221" xyaxes="-0.476 -0.880 -0.000 0.705 -0.381 0.598"/>
+
     </worldbody>
 </mujoco>

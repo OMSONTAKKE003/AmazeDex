@@ -42,7 +42,7 @@
   <contact>
     </contact>
   <default>
-    <equality solref="0.002 1" solimp="0.99 0.999 0.0005 0.5 2"/>
+    <equality solref="0.01 1" solimp="0.90 0.95 0.001 0.5 2"/>
   </default>
 
   <worldbody>
