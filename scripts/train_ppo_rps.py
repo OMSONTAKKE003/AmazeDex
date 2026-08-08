@@ -1,4 +1,4 @@
-"""Train PPO on AmazeDex/RockPaperScissors-v0 with PyTorch export (.pth) and Evaluation logging."""
+
 from __future__ import annotations
 
 import os
@@ -7,23 +7,28 @@ import numpy as np
 import wandb
 import register_amazedex_rps_env  # noqa: F401
 from stable_baselines3 import PPO
-from stable_baselines3.common.callbacks import BaseCallback, CallbackList, EvalCallback
+from stable_baselines3.common.callbacks import (
+    BaseCallback, 
+    CallbackList, 
+    EvalCallback, 
+    CheckpointCallback  # <-- Imported CheckpointCallback
+)
 from stable_baselines3.common.env_util import make_vec_env
 from wandb.integration.sb3 import WandbCallback
 
-ENV_ID = "AmazeDex/RockPaperScissors-v0"
+ENV_ID = "AmazeDex/CubeRotate-v0"
 N_ENVS = 16
-TOTAL_TIMESTEPS = 2_000_000
+TOTAL_TIMESTEPS = 40_000_000
 MODEL_DIR = "models"
 LOG_DIR = "logs"
 
-WANDB_PROJECT = "amazedex-rps"
+WANDB_PROJECT = "amazedex-cube"
 WANDB_ENTITY = None 
 WANDB_RUN_NAME = None 
 
 
 class RewardAndGestureEvalCallback(BaseCallback):
-    """Evaluates 20 random episodes, logs average rewards and success rates per gesture."""
+    """Evaluates random episodes, logs average rewards, success rates, and total twist angles."""
 
     def __init__(self, eval_env, eval_freq: int, n_eval_episodes: int = 20, verbose: int = 0):
         super().__init__(verbose)
@@ -36,7 +41,8 @@ class RewardAndGestureEvalCallback(BaseCallback):
             return True
 
         episode_rewards = []
-        per_gesture_correct: dict[str, list[bool]] = {}
+        episode_cum_twists = []   # To store total twist per episode
+        episode_successes = []    # To store if the 5 revolutions were completed
 
         for _ in range(self.n_eval_episodes):
             obs = self.eval_env.reset()
@@ -52,32 +58,37 @@ class RewardAndGestureEvalCallback(BaseCallback):
                 info = infos[0]
 
             episode_rewards.append(ep_reward)
-            name = info.get("target_gesture_name", "unknown")
-            per_gesture_correct.setdefault(name, []).append(bool(info.get("correct_gesture", False)))
+            
+            # The environment tracks `cum_twist` and `success`.
+            # When the loop breaks (done=True), `info` contains the final values for the episode.
+            final_cum_twist = float(info.get("cum_twist", 0.0))
+            final_success = bool(info.get("success", False))
+            
+            # Convert twist to degrees for easier interpretation (optional)
+            episode_cum_twists.append(np.degrees(final_cum_twist))
+            episode_successes.append(final_success)
 
         mean_reward = float(np.mean(episode_rewards))
         std_reward = float(np.std(episode_rewards))
+        
+        # Calculate averages for wandb
+        mean_cum_twist = float(np.mean(episode_cum_twists))
+        success_rate = float(np.mean(episode_successes))
 
         print(f"\n[EVAL Step {self.num_timesteps:07d}] Mean Reward: {mean_reward:.2f} +/- {std_reward:.2f}")
-
-        log_dict = {
-            "eval/mean_reward": mean_reward,
-            "eval/std_reward": std_reward,
-        }
-
-        for name, results in per_gesture_correct.items():
-            rate = float(np.mean(results))
-            log_dict[f"eval/success_rate_{name}"] = rate
-            print(f"  --> {name.upper()} Success Rate: {rate * 100:.1f}%")
-
+        print(f"  --> Mean Total Twist: {mean_cum_twist:.1f} degrees")
+        print(f"  --> Success Rate: {success_rate * 100:.1f}%")
         print("-" * 50)
 
         if wandb.run is not None:
-            wandb.log(log_dict, step=self.num_timesteps)
+            wandb.log({
+                "eval/mean_reward": mean_reward,
+                "eval/std_reward": std_reward,
+                "eval/mean_total_twist_deg": mean_cum_twist,
+                "eval/success_rate": success_rate,
+            }, step=self.num_timesteps)
 
         return True
-
-
 def main() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
@@ -92,7 +103,7 @@ def main() -> None:
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "clip_range": 0.2,
-        "ent_coef": 0.01,
+        "ent_coef": 0.001,
         "learning_rate": 3e-4,
         "policy": "MlpPolicy",
     }
@@ -149,7 +160,17 @@ def main() -> None:
         verbose=2,
     )
 
-    callback = CallbackList([eval_callback, reward_eval_callback, wandb_callback])
+    # <-- Added Checkpoint logic here
+    # Save a checkpoint every 5,000,000 total timesteps
+    checkpoint_freq = max(5000000 // N_ENVS, 1)
+    checkpoint_callback = CheckpointCallback(
+        save_freq=checkpoint_freq,
+        save_path=os.path.join(MODEL_DIR, "checkpoints"),
+        name_prefix="ppo_rps",
+    )
+
+    # <-- Added checkpoint_callback to the list
+    callback = CallbackList([eval_callback, reward_eval_callback, wandb_callback, checkpoint_callback])
 
     model.learn(
         total_timesteps=TOTAL_TIMESTEPS,
