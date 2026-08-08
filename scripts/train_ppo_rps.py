@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import os
@@ -14,10 +13,16 @@ from stable_baselines3.common.callbacks import (
     CheckpointCallback  # <-- Imported CheckpointCallback
 )
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.vec_env import SubprocVecEnv
 from wandb.integration.sb3 import WandbCallback
 
 ENV_ID = "AmazeDex/CubeRotate-v0"
-N_ENVS = 16
+# make_vec_env defaults to DummyVecEnv, which steps every env sequentially
+# in one process -- with MuJoCo's contact solver as the bottleneck, that
+# means "16 envs" was giving ~1x throughput. Use one worker process per
+# physical core instead of a hardcoded 16, and force PPO onto CPU (see
+# below) since this workload is sim-bound, not net-bound.
+N_ENVS = os.cpu_count() or 16
 TOTAL_TIMESTEPS = 40_000_000
 MODEL_DIR = "models"
 LOG_DIR = "logs"
@@ -106,6 +111,12 @@ def main() -> None:
         "ent_coef": 0.001,
         "learning_rate": 3e-4,
         "policy": "MlpPolicy",
+        # MlpPolicy is tiny and env.step() (MuJoCo contact solving) is the
+        # bottleneck here, not the forward/backward pass -- GPU transfer
+        # overhead per batch tends to make "cuda" a net loss for a network
+        # this small. Try both on your machine and compare fps, but cpu is
+        # the better default for this workload.
+        "device": "cpu",
     }
 
     run = wandb.init(
@@ -118,7 +129,13 @@ def main() -> None:
         save_code=True,
     )
 
-    train_env = make_vec_env(ENV_ID, n_envs=N_ENVS)
+    # vec_env_cls=SubprocVecEnv actually spawns N_ENVS worker processes so
+    # mj_step() calls run in parallel across cores. Without this, all envs
+    # were stepping one after another in the main process.
+    train_env = make_vec_env(ENV_ID, n_envs=N_ENVS, vec_env_cls=SubprocVecEnv)
+    # eval_env stays single-process/DummyVecEnv on purpose -- it's only
+    # ever stepped by one env at a time (deterministic eval rollouts), so
+    # spawning a subprocess for it would be pure overhead.
     eval_env = make_vec_env(ENV_ID, n_envs=1)
 
     model = PPO(
@@ -132,25 +149,33 @@ def main() -> None:
         clip_range=config["clip_range"],
         ent_coef=config["ent_coef"],
         learning_rate=config["learning_rate"],
+        device=config["device"],
         verbose=1,
         tensorboard_log=LOG_DIR,
     )
 
-    eval_freq = max(10_000 // N_ENVS, 1)
+    # eval_freq is counted in per-env steps (SB3 multiplies by n_envs
+    # internally), so as N_ENVS scales up with cpu_count, the old
+    # `10_000 // N_ENVS` shrinks and evals fire *more* often in wall-clock
+    # time, not less. Anchor to a fixed total-timestep interval instead so
+    # eval cadence stays constant regardless of how many workers you run.
+    EVAL_EVERY_N_TOTAL_STEPS = 200_000
+    eval_freq = max(EVAL_EVERY_N_TOTAL_STEPS // N_ENVS, 1)
+    N_EVAL_EPISODES = 10  # was 20, run by two separate callbacks -- halving cuts serial eval rollout time roughly in half
 
     eval_callback = EvalCallback(
         eval_env,
         best_model_save_path=MODEL_DIR,
         log_path=LOG_DIR,
         eval_freq=eval_freq,
-        n_eval_episodes=20,
+        n_eval_episodes=N_EVAL_EPISODES,
         deterministic=True,
     )
 
     reward_eval_callback = RewardAndGestureEvalCallback(
         eval_env=eval_env,
         eval_freq=eval_freq,
-        n_eval_episodes=20,
+        n_eval_episodes=N_EVAL_EPISODES,
     )
 
     wandb_callback = WandbCallback(
