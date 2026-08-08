@@ -4,7 +4,7 @@ import os
 import torch
 import numpy as np
 import wandb
-import register_amazedex_rps_env  # noqa: F401
+import register_amazedex_env  # noqa: F401
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
     BaseCallback, 
@@ -17,11 +17,7 @@ from stable_baselines3.common.vec_env import SubprocVecEnv
 from wandb.integration.sb3 import WandbCallback
 
 ENV_ID = "AmazeDex/CubeRotate-v0"
-# make_vec_env defaults to DummyVecEnv, which steps every env sequentially
-# in one process -- with MuJoCo's contact solver as the bottleneck, that
-# means "16 envs" was giving ~1x throughput. Use one worker process per
-# physical core instead of a hardcoded 16, and force PPO onto CPU (see
-# below) since this workload is sim-bound, not net-bound.
+
 N_ENVS = os.cpu_count() or 16
 TOTAL_TIMESTEPS = 40_000_000
 MODEL_DIR = "models"
@@ -111,12 +107,14 @@ def main() -> None:
         "ent_coef": 0.001,
         "learning_rate": 3e-4,
         "policy": "MlpPolicy",
-        # MlpPolicy is tiny and env.step() (MuJoCo contact solving) is the
-        # bottleneck here, not the forward/backward pass -- GPU transfer
-        # overhead per batch tends to make "cuda" a net loss for a network
-        # this small. Try both on your machine and compare fps, but cpu is
-        # the better default for this workload.
-        "device": "cpu",
+        # Policy now trains on GPU. Note env creation (line below, forking
+        # the SubprocVecEnv workers) happens BEFORE this config is used to
+        # build PPO -- keep it that way. If a CUDA context gets initialized
+        # in the parent process before fork(), Linux's default fork start
+        # method can hand children a half-broken copy of it, which is
+        # exactly the kind of stray "Compute" process you saw in nvtop
+        # last time. Building train_env first avoids that.
+        "device": "cuda",
     }
 
     run = wandb.init(
@@ -132,6 +130,15 @@ def main() -> None:
     # vec_env_cls=SubprocVecEnv actually spawns N_ENVS worker processes so
     # mj_step() calls run in parallel across cores. Without this, all envs
     # were stepping one after another in the main process.
+    #
+    # Default fork start method (no start_method override) -- matches the
+    # reference script. This is safe as-is because train_env is built here,
+    # BEFORE the PPO(...) call below moves the policy onto cuda: fork()
+    # duplicates parent memory into each worker, so as long as no CUDA
+    # context exists in the parent yet at fork time, workers never inherit
+    # one. If you ever reorder this (e.g. construct the model first, or add
+    # any torch.cuda call above this line), switch back to
+    # vec_env_kwargs=dict(start_method="spawn") to stay safe.
     train_env = make_vec_env(ENV_ID, n_envs=N_ENVS, vec_env_cls=SubprocVecEnv)
     # eval_env stays single-process/DummyVecEnv on purpose -- it's only
     # ever stepped by one env at a time (deterministic eval rollouts), so
