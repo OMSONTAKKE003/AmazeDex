@@ -7,7 +7,7 @@ from amazedex_cube_env import AmazeDexCubeEnv
 gym.register(
     id="AmazeDex/CubeRotate-v0",
     entry_point=AmazeDexCubeEnv,
-    max_episode_steps=500,  # matches MAX_STEPS in amazedex_cube_env.py
+    max_episode_steps=800,  # matches MAX_STEPS in amazedex_cube_env.py
 )
 
 

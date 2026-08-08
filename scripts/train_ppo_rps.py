@@ -27,6 +27,25 @@ WANDB_PROJECT = "amazedex-cube"
 WANDB_ENTITY = None 
 WANDB_RUN_NAME = None 
 
+# Flat learning rate for this run (no decay schedule).
+LEARNING_RATE = 5e-5
+
+
+TARGET_BATCH_SIZE = 1024
+
+
+def largest_clean_divisor(buffer_size: int, target: int) -> int:
+    """Largest divisor of buffer_size that is <= target.
+
+    Guarantees PPO's minibatches evenly tile the rollout buffer (no
+    truncated trailing minibatch, no SB3 warning), while getting as close
+    as possible to the desired batch size.
+    """
+    for candidate in range(min(target, buffer_size), 0, -1):
+        if buffer_size % candidate == 0:
+            return candidate
+    return buffer_size  # unreachable in practice, buffer_size always divides itself
+
 
 class RewardAndGestureEvalCallback(BaseCallback):
     """Evaluates random episodes, logs average rewards, success rates, and total twist angles."""
@@ -94,18 +113,28 @@ def main() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
 
+    # Everything in this dict must stay JSON-serializable -- it's passed
+    # straight to wandb.init(config=...).
+    n_steps = 512  # was 256 -- more rollout data per update, needed to back the larger batch_size below
+    buffer_size = n_steps * N_ENVS
+    batch_size = largest_clean_divisor(buffer_size, TARGET_BATCH_SIZE)
+    print(f"[config] rollout buffer_size = n_steps({n_steps}) * N_ENVS({N_ENVS}) = {buffer_size}")
+    print(f"[config] batch_size = {batch_size} (target was {TARGET_BATCH_SIZE}, "
+          f"{buffer_size // batch_size} clean minibatches per epoch)")
+
     config = {
         "env_id": ENV_ID,
         "n_envs": N_ENVS,
         "total_timesteps": TOTAL_TIMESTEPS,
-        "n_steps": 256,
-        "batch_size": 256,
-        "n_epochs": 10,
+        "n_steps": n_steps,
+        "batch_size": batch_size,
+        "n_epochs": 5,           # was 10 -- fewer passes over each rollout batch reduces cumulative KL drift per update
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "clip_range": 0.2,
-        "ent_coef": 0.001,
-        "learning_rate": 3e-4,
+        "ent_coef": 0.0,         # was 0.001 -- was driving train/std to climb monotonically with no plateau
+        "target_kl": 0.02,       # new -- hard stop mid-epoch if KL exceeds this, guards against the collapse events seen last run
+        "learning_rate": LEARNING_RATE,
         "policy": "MlpPolicy",
         # Policy now trains on GPU. Note env creation (line below, forking
         # the SubprocVecEnv workers) happens BEFORE this config is used to
@@ -127,22 +156,9 @@ def main() -> None:
         save_code=True,
     )
 
-    # vec_env_cls=SubprocVecEnv actually spawns N_ENVS worker processes so
-    # mj_step() calls run in parallel across cores. Without this, all envs
-    # were stepping one after another in the main process.
-    #
-    # Default fork start method (no start_method override) -- matches the
-    # reference script. This is safe as-is because train_env is built here,
-    # BEFORE the PPO(...) call below moves the policy onto cuda: fork()
-    # duplicates parent memory into each worker, so as long as no CUDA
-    # context exists in the parent yet at fork time, workers never inherit
-    # one. If you ever reorder this (e.g. construct the model first, or add
-    # any torch.cuda call above this line), switch back to
-    # vec_env_kwargs=dict(start_method="spawn") to stay safe.
+    
     train_env = make_vec_env(ENV_ID, n_envs=N_ENVS, vec_env_cls=SubprocVecEnv)
-    # eval_env stays single-process/DummyVecEnv on purpose -- it's only
-    # ever stepped by one env at a time (deterministic eval rollouts), so
-    # spawning a subprocess for it would be pure overhead.
+    
     eval_env = make_vec_env(ENV_ID, n_envs=1)
 
     model = PPO(
@@ -155,17 +171,12 @@ def main() -> None:
         gae_lambda=config["gae_lambda"],
         clip_range=config["clip_range"],
         ent_coef=config["ent_coef"],
+        target_kl=config["target_kl"],
         learning_rate=config["learning_rate"],
         device=config["device"],
         verbose=1,
         tensorboard_log=LOG_DIR,
     )
-
-    # eval_freq is counted in per-env steps (SB3 multiplies by n_envs
-    # internally), so as N_ENVS scales up with cpu_count, the old
-    # `10_000 // N_ENVS` shrinks and evals fire *more* often in wall-clock
-    # time, not less. Anchor to a fixed total-timestep interval instead so
-    # eval cadence stays constant regardless of how many workers you run.
     EVAL_EVERY_N_TOTAL_STEPS = 200_000
     eval_freq = max(EVAL_EVERY_N_TOTAL_STEPS // N_ENVS, 1)
     N_EVAL_EPISODES = 10  # was 20, run by two separate callbacks -- halving cuts serial eval rollout time roughly in half
@@ -194,7 +205,7 @@ def main() -> None:
 
     # <-- Added Checkpoint logic here
     # Save a checkpoint every 5,000,000 total timesteps
-    checkpoint_freq = max(5000000 // N_ENVS, 1)
+    checkpoint_freq = max(1000000 // N_ENVS, 1)
     checkpoint_callback = CheckpointCallback(
         save_freq=checkpoint_freq,
         save_path=os.path.join(MODEL_DIR, "checkpoints"),

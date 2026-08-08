@@ -25,7 +25,7 @@ JOINT_NAMES = [
 CUBE_BODY_NAME = "cube"
 
 FRAME_SKIP = 1
-MAX_STEPS = 500
+MAX_STEPS = 800
 
 FALL_HEIGHT_THRESHOLD = 0.05
 
@@ -33,23 +33,20 @@ ROT_AXIS = np.array([0.0, 0.0, 1.0])
 REF_VECTOR = np.array([1.0, 0.0, 0.0])
 LOCAL_UP_AXIS = np.array([0.0, 0.0, 1.0])
 
+MAX_STEP_ANGLE = np.pi / 20  # Avoid large rotation per step
 
-MAX_STEP_ANGLE = np.pi / 20  #To avoid large rotation in one dt,because it should not ideally happen
+NOISE_DEADZONE_DEG = 0.05  # Avoid noise for twist angle
 
-NOISE_DEADZONE_DEG = 0.05 #To Avoid noise for twist angle  
+SWING_LIMIT_DEG = 10.0  # Allow up to 10 degrees tilt without penalty
 
-SWING_FALL_THRESHOLD = 0.3 
-
-SWING_LIMIT_DEG = 10.0 #To avoid tilting more than  10 degree from the target axis 
-
-
+# --- REWARD & PENALTY SCALES ---
 ROTATION_REWARD_SCALE = 20.0
-VELOCITY_PENALTY_SCALE = 0.1
+VELOCITY_PENALTY_SCALE = 1
 FALL_PENALTY = 15.0
-ACTION_SMOOTHNESS_SCALE = 0.01
-SWING_PENALTY_SCALE = 0.01
+ACTION_SMOOTHNESS_SCALE = 0.1
+SWING_PENALTY_SCALE = 0.05  # Linear scale (capped at -1.0 max per step)
 
-SUCCESS_THRESHOLD = 5*2 * np.pi #Success when 5 revolutions get completed
+SUCCESS_THRESHOLD = 5 * 2 * np.pi  # Success when 5 revolutions are completed
 
 
 class AmazeDexCubeEnv(MujocoEnv):
@@ -95,7 +92,7 @@ class AmazeDexCubeEnv(MujocoEnv):
         v = world_vec - np.dot(world_vec, self._rot_dir) * self._rot_dir
         n = np.linalg.norm(v)
         return v / n if n > 1e-8 else None
-    #Calculation part for  the swing and twist angle
+
     def _twist_and_swing(self):
         cube_quat = self.data.xquat[self.cube_body_id]
         world_ref = self._rotate_local(self._ref_vec, cube_quat)
@@ -146,33 +143,35 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.do_simulation(full_ctrl, self.frame_skip)
         self.steps += 1
 
-        #----REWARD---------
+        # ---- REWARD & METRICS COMPUTATION ----
         angle, alignment, _ = self._twist_and_swing()
         self.cum_twist += angle
-        success = self.cum_twist > SUCCESS_THRESHOLD
+        success = bool(self.cum_twist > SUCCESS_THRESHOLD)
 
         cube_z = float(self.data.xpos[self.cube_body_id][2])
         if self.cube_init_height is None:
             self.cube_init_height = cube_z
-        fallen = cube_z < (self.cube_init_height - FALL_HEIGHT_THRESHOLD)
 
-        tipped_over = alignment < SWING_FALL_THRESHOLD
-        dropped = fallen or tipped_over
+        # Check if the cube has dropped
+        fallen = bool(cube_z < (self.cube_init_height - FALL_HEIGHT_THRESHOLD))
 
+        # Calculate swing tilt
         swing_deg = float(np.degrees(np.arccos(np.clip(alignment, -1.0, 1.0))))
         swing_excess = max(0.0, swing_deg - SWING_LIMIT_DEG)
 
+        # Reward terms
         rotation_reward = ROTATION_REWARD_SCALE * angle
 
-        obj_linear_vel = np.linalg.norm(self.data.cvel[self.cube_body_id, 3:6])
+        obj_linear_vel = float(np.linalg.norm(self.data.cvel[self.cube_body_id, 3:6]))
         velocity_penalty = -VELOCITY_PENALTY_SCALE * obj_linear_vel
 
-        fall_penalty = -FALL_PENALTY * float(dropped)
+        fall_penalty = -FALL_PENALTY * float(fallen)
 
         action_delta = action - self.prev_action
         smoothness_penalty = -ACTION_SMOOTHNESS_SCALE * float(np.sum(np.square(action_delta)))
 
-        swing_penalty = -SWING_PENALTY_SCALE * (swing_excess ** 2)
+        # Linear, capped swing penalty (Max penalty capped at -1.0 per step)
+        swing_penalty = -min(1.0, SWING_PENALTY_SCALE * swing_excess)
 
         reward = (
             rotation_reward
@@ -182,7 +181,8 @@ class AmazeDexCubeEnv(MujocoEnv):
             + swing_penalty
         )
 
-        terminated = dropped
+        # Episode terminations
+        terminated = fallen
         truncated = self.steps >= MAX_STEPS
 
         self.prev_action = action.copy()
@@ -191,10 +191,8 @@ class AmazeDexCubeEnv(MujocoEnv):
             self.render()
 
         info = {
-            "cube_dropped": dropped,
             "fallen": fallen,
             "cube_z": cube_z,
-            "tipped_over": tipped_over,
             "twist_angle": angle,
             "cum_twist": self.cum_twist,
             "alignment": alignment,
@@ -211,7 +209,6 @@ class AmazeDexCubeEnv(MujocoEnv):
 
 
 if __name__ == "__main__":
-
     env = AmazeDexCubeEnv()
     for episode in range(5):
         obs, info = env.reset(seed=episode)
@@ -221,9 +218,8 @@ if __name__ == "__main__":
             action = env.action_space.sample()
             obs, reward, terminated, truncated, info = env.step(action)
             total_reward += reward
-        reason = "cube fell" if info["fallen"] else (
-            "cube tipped/swung out of grasp" if info["tipped_over"] else "max steps reached"
-        )
+
+        reason = "cube fell" if info["fallen"] else "max steps reached"
         print(
             f"episode {episode}: return={total_reward:.2f}, steps={env.steps}, "
             f"cum_twist={np.degrees(env.cum_twist):.1f} deg, ended: {reason}"
