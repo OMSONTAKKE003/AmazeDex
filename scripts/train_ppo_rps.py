@@ -2,147 +2,180 @@ from __future__ import annotations
 
 import os
 import torch
-import numpy as np
+import psutil
+import imageio
 import wandb
 import register_amazedex_env  # noqa: F401
+
 from stable_baselines3 import PPO
 from stable_baselines3.common.callbacks import (
-    BaseCallback, 
-    CallbackList, 
-    EvalCallback, 
-    CheckpointCallback  # <-- Imported CheckpointCallback
+    BaseCallback, CallbackList, EvalCallback, CheckpointCallback
 )
 from stable_baselines3.common.env_util import make_vec_env
-from stable_baselines3.common.vec_env import SubprocVecEnv
+from stable_baselines3.common.vec_env import (
+    SubprocVecEnv, VecNormalize, sync_envs_normalization
+)
 from wandb.integration.sb3 import WandbCallback
 
+# ============================================================
+# Configuration
+# ============================================================
 ENV_ID = "AmazeDex/CubeRotate-v0"
-
-N_ENVS = os.cpu_count() or 16
+MAX_ENVS = 32
+N_ENVS = min(os.cpu_count() or 16, int(os.environ.get("N_ENVS_OVERRIDE", MAX_ENVS)))
 TOTAL_TIMESTEPS = 40_000_000
 MODEL_DIR = "models"
 LOG_DIR = "logs"
-
 WANDB_PROJECT = "amazedex-cube"
-WANDB_ENTITY = None 
-WANDB_RUN_NAME = None 
-
-# Flat learning rate for this run (no decay schedule).
+WANDB_ENTITY = None
+WANDB_RUN_NAME = None
 LEARNING_RATE = 5e-5
+N_STEPS = 1024
+TARGET_BATCH_SIZE = 4096
 
-
-TARGET_BATCH_SIZE = 1024
-
-
+# ============================================================
+# Utility
+# ============================================================
 def largest_clean_divisor(buffer_size: int, target: int) -> int:
-    """Largest divisor of buffer_size that is <= target.
-
-    Guarantees PPO's minibatches evenly tile the rollout buffer (no
-    truncated trailing minibatch, no SB3 warning), while getting as close
-    as possible to the desired batch size.
-    """
+    """Return the largest divisor of buffer_size that is <= target."""
     for candidate in range(min(target, buffer_size), 0, -1):
         if buffer_size % candidate == 0:
             return candidate
-    return buffer_size  # unreachable in practice, buffer_size always divides itself
+    return buffer_size
 
-
-class RewardAndGestureEvalCallback(BaseCallback):
-    """Evaluates random episodes, logs average rewards, success rates, and total twist angles."""
-
-    def __init__(self, eval_env, eval_freq: int, n_eval_episodes: int = 20, verbose: int = 0):
+# ============================================================
+# Memory Guard
+# ============================================================
+class MemoryGuardCallback(BaseCallback):
+    """Stop training gracefully before the Linux OOM killer terminates the process."""
+    def __init__(self, save_path: str, check_every_n_steps: int = 2000, threshold_pct: float = 90.0, verbose: int = 1):
         super().__init__(verbose)
-        self.eval_env = eval_env
-        self.eval_freq = eval_freq
-        self.n_eval_episodes = n_eval_episodes
+        self.save_path = save_path
+        self.check_every_n_steps = check_every_n_steps
+        self.threshold_pct = threshold_pct
 
     def _on_step(self) -> bool:
-        if self.n_calls % self.eval_freq != 0:
+        if self.n_calls % self.check_every_n_steps != 0:
             return True
 
-        episode_rewards = []
-        episode_cum_twists = []   # To store total twist per episode
-        episode_successes = []    # To store if the 5 revolutions were completed
+        mem = psutil.virtual_memory()
+        if self.verbose:
+            print(f"[mem-guard] system RAM: {mem.percent:.1f}% used ({mem.used / 1e9:.1f} / {mem.total / 1e9:.1f} GB)")
 
-        for _ in range(self.n_eval_episodes):
-            obs = self.eval_env.reset()
-            done = False
-            ep_reward = 0.0
-            info = {}
+        if mem.percent < self.threshold_pct:
+            return True
 
-            while not done:
-                action, _ = self.model.predict(obs, deterministic=True)
-                obs, reward, done_arr, infos = self.eval_env.step(action)
-                ep_reward += float(reward[0])
-                done = bool(done_arr[0])
-                info = infos[0]
-
-            episode_rewards.append(ep_reward)
-            
-            # The environment tracks `cum_twist` and `success`.
-            # When the loop breaks (done=True), `info` contains the final values for the episode.
-            final_cum_twist = float(info.get("cum_twist", 0.0))
-            final_success = bool(info.get("success", False))
-            
-            # Convert twist to degrees for easier interpretation (optional)
-            episode_cum_twists.append(np.degrees(final_cum_twist))
-            episode_successes.append(final_success)
-
-        mean_reward = float(np.mean(episode_rewards))
-        std_reward = float(np.std(episode_rewards))
+        os.makedirs(self.save_path, exist_ok=True)
+        emergency_path = os.path.join(self.save_path, f"emergency_step_{self.num_timesteps}")
         
-        # Calculate averages for wandb
-        mean_cum_twist = float(np.mean(episode_cum_twists))
-        success_rate = float(np.mean(episode_successes))
+        print(f"\n[mem-guard] RAM at {mem.percent:.1f}% (>= {self.threshold_pct}%)")
+        print(f"[mem-guard] saving emergency checkpoint to {emergency_path}")
+        
+        self.model.save(emergency_path)
+        if isinstance(self.training_env, VecNormalize):
+            self.training_env.save(emergency_path + "_vecnormalize.pkl")
+            
+        print("[mem-guard] stopping training safely.")
+        return False
 
-        print(f"\n[EVAL Step {self.num_timesteps:07d}] Mean Reward: {mean_reward:.2f} +/- {std_reward:.2f}")
-        print(f"  --> Mean Total Twist: {mean_cum_twist:.1f} degrees")
-        print(f"  --> Success Rate: {success_rate * 100:.1f}%")
-        print("-" * 50)
+# ============================================================
+# Video Evaluation
+# ============================================================
+class VideoEvalCallback(BaseCallback):
+    """Record one deterministic evaluation episode as an MP4."""
+    def __init__(self, video_env, save_dir: str, record_every_n_steps: int, fps: int | None = None, max_steps: int = 1000, verbose: int = 1):
+        super().__init__(verbose)
+        self.video_env = video_env
+        self.raw_env = video_env.envs[0]
+        self.save_dir = save_dir
+        self.record_every_n_steps = record_every_n_steps
+        self.fps = fps or self.raw_env.metadata.get("render_fps", 15)
+        self.max_steps = max_steps
+
+    def _on_step(self) -> bool:
+        if self.n_calls % self.record_every_n_steps != 0:
+            return True
+        self._record_video()
+        return True
+
+    def _record_video(self) -> None:
+        if isinstance(self.training_env, VecNormalize) and isinstance(self.video_env, VecNormalize):
+            sync_envs_normalization(self.training_env, self.video_env)
+
+        frames = []
+        obs = self.video_env.reset()
+        done = False
+        steps = 0
+
+        while not done and steps < self.max_steps:
+            action, _ = self.model.predict(obs, deterministic=True)
+            obs, _reward, done_arr, _infos = self.video_env.step(action)
+            done = bool(done_arr[0])
+            steps += 1
+            frame = self.raw_env.render()
+            if frame is not None:
+                frames.append(frame)
+
+        if not frames:
+            print(f"[video-eval] step {self.num_timesteps}: no frames captured (render() returned None).")
+            return
+
+        os.makedirs(self.save_dir, exist_ok=True)
+        mp4_path = os.path.join(self.save_dir, f"eval_step_{self.num_timesteps}.mp4")
+
+        try:
+            imageio.mimsave(mp4_path, frames, fps=self.fps)
+        except Exception as e:
+            print(f"[video-eval] step {self.num_timesteps}: failed to write {mp4_path}: {e}")
+            return
+
+        print(f"[video-eval] step {self.num_timesteps}: saved {mp4_path} ({len(frames)} frames @ {self.fps} fps)")
 
         if wandb.run is not None:
-            wandb.log({
-                "eval/mean_reward": mean_reward,
-                "eval/std_reward": std_reward,
-                "eval/mean_total_twist_deg": mean_cum_twist,
-                "eval/success_rate": success_rate,
-            }, step=self.num_timesteps)
+            wandb.log({"eval/video": wandb.Video(mp4_path, fps=self.fps, format="mp4")}, step=self.num_timesteps)
 
-        return True
+# ============================================================
+# Main Training
+# ============================================================
 def main() -> None:
     os.makedirs(MODEL_DIR, exist_ok=True)
     os.makedirs(LOG_DIR, exist_ok=True)
+    checkpoint_dir = os.path.join(MODEL_DIR, "checkpoints")
+    video_dir = os.path.join(checkpoint_dir, "videos")
+    os.makedirs(checkpoint_dir, exist_ok=True)
+    os.makedirs(video_dir, exist_ok=True)
 
-    # Everything in this dict must stay JSON-serializable -- it's passed
-    # straight to wandb.init(config=...).
-    n_steps = 512  # was 256 -- more rollout data per update, needed to back the larger batch_size below
-    buffer_size = n_steps * N_ENVS
+    buffer_size = N_STEPS * N_ENVS
     batch_size = largest_clean_divisor(buffer_size, TARGET_BATCH_SIZE)
-    print(f"[config] rollout buffer_size = n_steps({n_steps}) * N_ENVS({N_ENVS}) = {buffer_size}")
-    print(f"[config] batch_size = {batch_size} (target was {TARGET_BATCH_SIZE}, "
-          f"{buffer_size // batch_size} clean minibatches per epoch)")
+
+    print("\n========== TRAINING CONFIG ==========")
+    print(f"Environment:       {ENV_ID}")
+    print(f"N_ENVS:            {N_ENVS}")
+    print(f"N_STEPS:           {N_STEPS}")
+    print(f"Rollout buffer:    {buffer_size}")
+    print(f"Target batch:      {TARGET_BATCH_SIZE}")
+    print(f"Actual batch:      {batch_size}")
+    print(f"Minibatches/epoch: {buffer_size // batch_size}")
+    print("PPO epochs:        5")
+    print(f"Learning rate:     {LEARNING_RATE}")
+    print(f"Total timesteps:   {TOTAL_TIMESTEPS}")
+    print("Device:            CUDA")
+    print("=====================================\n")
 
     config = {
         "env_id": ENV_ID,
         "n_envs": N_ENVS,
         "total_timesteps": TOTAL_TIMESTEPS,
-        "n_steps": n_steps,
+        "n_steps": N_STEPS,
         "batch_size": batch_size,
-        "n_epochs": 5,           # was 10 -- fewer passes over each rollout batch reduces cumulative KL drift per update
+        "n_epochs": 5,
         "gamma": 0.99,
         "gae_lambda": 0.95,
         "clip_range": 0.2,
-        "ent_coef": 0.0,         # was 0.001 -- was driving train/std to climb monotonically with no plateau
-        "target_kl": 0.02,       # new -- hard stop mid-epoch if KL exceeds this, guards against the collapse events seen last run
+        "ent_coef": 0.0,
+        "target_kl": 0.02,
         "learning_rate": LEARNING_RATE,
         "policy": "MlpPolicy",
-        # Policy now trains on GPU. Note env creation (line below, forking
-        # the SubprocVecEnv workers) happens BEFORE this config is used to
-        # build PPO -- keep it that way. If a CUDA context gets initialized
-        # in the parent process before fork(), Linux's default fork start
-        # method can hand children a half-broken copy of it, which is
-        # exactly the kind of stray "Compute" process you saw in nvtop
-        # last time. Building train_env first avoids that.
         "device": "cuda",
     }
 
@@ -156,14 +189,18 @@ def main() -> None:
         save_code=True,
     )
 
-    
     train_env = make_vec_env(ENV_ID, n_envs=N_ENVS, vec_env_cls=SubprocVecEnv)
-    
+    train_env = VecNormalize(train_env, norm_obs=True, norm_reward=True, gamma=config["gamma"])
+
     eval_env = make_vec_env(ENV_ID, n_envs=1)
+    eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, training=False)
+
+    video_env = make_vec_env(ENV_ID, n_envs=1, env_kwargs={"render_mode": "rgb_array"})
+    video_env = VecNormalize(video_env, norm_obs=True, norm_reward=False, training=False)
 
     model = PPO(
-        config["policy"],
-        train_env,
+        policy=config["policy"],
+        env=train_env,
         n_steps=config["n_steps"],
         batch_size=config["batch_size"],
         n_epochs=config["n_epochs"],
@@ -177,9 +214,18 @@ def main() -> None:
         verbose=1,
         tensorboard_log=LOG_DIR,
     )
+
+    print("\n========== CUDA CHECK ==========")
+    print("CUDA available:", torch.cuda.is_available())
+    if torch.cuda.is_available():
+        print("GPU:", torch.cuda.get_device_name(0))
+    print("SB3 device:", model.device)
+    print("Policy device:", next(model.policy.parameters()).device)
+    print("================================\n")
+
     EVAL_EVERY_N_TOTAL_STEPS = 200_000
     eval_freq = max(EVAL_EVERY_N_TOTAL_STEPS // N_ENVS, 1)
-    N_EVAL_EPISODES = 10  # was 20, run by two separate callbacks -- halving cuts serial eval rollout time roughly in half
+    N_EVAL_EPISODES = 10
 
     eval_callback = EvalCallback(
         eval_env,
@@ -188,12 +234,8 @@ def main() -> None:
         eval_freq=eval_freq,
         n_eval_episodes=N_EVAL_EPISODES,
         deterministic=True,
-    )
-
-    reward_eval_callback = RewardAndGestureEvalCallback(
-        eval_env=eval_env,
-        eval_freq=eval_freq,
-        n_eval_episodes=N_EVAL_EPISODES,
+        render=False,
+        verbose=1,
     )
 
     wandb_callback = WandbCallback(
@@ -203,38 +245,63 @@ def main() -> None:
         verbose=2,
     )
 
-    # <-- Added Checkpoint logic here
-    # Save a checkpoint every 5,000,000 total timesteps
-    checkpoint_freq = max(1000000 // N_ENVS, 1)
+    checkpoint_freq = max(1_000_000 // N_ENVS, 1)
     checkpoint_callback = CheckpointCallback(
         save_freq=checkpoint_freq,
-        save_path=os.path.join(MODEL_DIR, "checkpoints"),
+        save_path=checkpoint_dir,
         name_prefix="ppo_rps",
+        save_vecnormalize=True,
     )
 
-    # <-- Added checkpoint_callback to the list
-    callback = CallbackList([eval_callback, reward_eval_callback, wandb_callback, checkpoint_callback])
-
-    model.learn(
-        total_timesteps=TOTAL_TIMESTEPS,
-        callback=callback,
-        progress_bar=True,
+    memory_guard_callback = MemoryGuardCallback(
+        save_path=checkpoint_dir,
+        check_every_n_steps=2000,
+        threshold_pct=90.0,
+        verbose=1,
     )
 
-    # 1. Save SB3 zip format
-    final_sb3_path = os.path.join(MODEL_DIR, "ppo_rps_final.zip")
-    model.save(final_sb3_path)
+    video_eval_callback = VideoEvalCallback(
+        video_env=video_env,
+        save_dir=video_dir,
+        record_every_n_steps=checkpoint_freq,
+        max_steps=1000,
+        verbose=1,
+    )
 
-    # 2. Save pure PyTorch weights (.pth)
-    pth_path = os.path.join(MODEL_DIR, "model.pth")
-    torch.save(model.policy.state_dict(), pth_path)
+    callback = CallbackList([
+        eval_callback,
+        wandb_callback,
+        checkpoint_callback,
+        memory_guard_callback,
+        video_eval_callback,
+    ])
 
-    print(f"\nTraining Complete!")
-    print(f" Saved SB3 Model: {final_sb3_path}")
-    print(f" Saved PyTorch Weights: {pth_path}")
+    try:
+        model.learn(total_timesteps=TOTAL_TIMESTEPS, callback=callback, progress_bar=True)
 
-    run.finish()
+        final_sb3_path = os.path.join(MODEL_DIR, "ppo_rps_final.zip")
+        model.save(final_sb3_path)
 
+        final_vecnormalize_path = os.path.join(MODEL_DIR, "vecnormalize_final.pkl")
+        train_env.save(final_vecnormalize_path)
 
+        pth_path = os.path.join(MODEL_DIR, "model.pth")
+        torch.save(model.policy.state_dict(), pth_path)
+
+        print("\n========== TRAINING COMPLETE ==========")
+        print(f"SB3 Model:          {final_sb3_path}")
+        print(f"VecNormalize stats: {final_vecnormalize_path}")
+        print(f"PyTorch weights:    {pth_path}")
+        print("========================================\n")
+
+    finally:
+        train_env.close()
+        eval_env.close()
+        video_env.close()
+        run.finish()
+
+# ============================================================
+# Entry Point
+# ============================================================
 if __name__ == "__main__":
     main()

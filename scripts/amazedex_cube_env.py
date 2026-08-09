@@ -46,7 +46,7 @@ FALL_PENALTY = 15.0
 ACTION_SMOOTHNESS_SCALE = 0.1
 SWING_PENALTY_SCALE = 0.05  # Linear scale (capped at -1.0 max per step)
 
-SUCCESS_THRESHOLD = 5 * 2 * np.pi  # Success when 5 revolutions are completed
+SUCCESS_THRESHOLD =  2 * np.pi  # Success when 1 revolutions are completed
 
 
 class AmazeDexCubeEnv(MujocoEnv):
