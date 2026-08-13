@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import os
+import glob
 import torch
 import psutil
-import imageio
 import wandb
 import gymnasium as gym
+from gymnasium.wrappers import RecordVideo
 import register_amazedex_env  # noqa: F401  -- registers AmazeDex/CubeRotate-v0 in the main process
 
 from stable_baselines3 import PPO
@@ -21,7 +22,7 @@ from wandb.integration.sb3 import WandbCallback
 # ============================================================
 # Configuration
 # ============================================================
-ENV_ID =  "AmazeDex/CubeGrasp-v0"
+ENV_ID = "AmazeDex/CubeRotate-v0"
 MAX_ENVS = 32
 N_ENVS = min(os.cpu_count() or 16, int(os.environ.get("N_ENVS_OVERRIDE", MAX_ENVS)))
 TOTAL_TIMESTEPS = 40_000_000
@@ -155,14 +156,38 @@ class CurriculumSyncCallback(BaseCallback):
 # Video Evaluation
 # ============================================================
 class VideoEvalCallback(BaseCallback):
-    """Record one deterministic evaluation episode as an MP4."""
-    def __init__(self, video_env, save_dir: str, record_every_n_steps: int, fps: int | None = None, max_steps: int = 1000, verbose: int = 1):
+    """
+    Record one deterministic evaluation episode as an MP4 using gymnasium's
+    RecordVideo wrapper (same pattern as CheckpointVideoCallback in the
+    DDPG+HER script), instead of manually collecting render() frames and
+    encoding them with imageio.
+
+    A fresh single env is built and wrapped per call rather than reusing a
+    persisted DummyVecEnv, since RecordVideo wraps a raw gym.Env, not a
+    VecEnv. This also sidesteps having to keep a long-lived video_env's
+    VecNormalize stats in sync across the whole run -- we just sync once,
+    right before recording, using the raw single-env obs.
+    """
+    def __init__(
+        self,
+        env_id: str,
+        video_dir: str,
+        record_every_n_steps: int,
+        env_kwargs: dict | None = None,
+        norm_env: VecNormalize | None = None,
+        max_steps: int = 1000,
+        verbose: int = 1,
+    ):
         super().__init__(verbose)
-        self.video_env = video_env
-        self.raw_env = video_env.envs[0]
-        self.save_dir = save_dir
+        self.env_id = env_id
+        self.video_dir = video_dir
         self.record_every_n_steps = record_every_n_steps
-        self.fps = fps or self.raw_env.metadata.get("render_fps", 15)
+        self.env_kwargs = env_kwargs or {}
+        # Optional VecNormalize instance to pull obs/reward running stats
+        # from before each recording -- pass the training_env's VecNormalize
+        # wrapper (or a dedicated eval VecNormalize) if obs normalization is
+        # in use, so the policy sees inputs on the scale it was trained on.
+        self.norm_env = norm_env
         self.max_steps = max_steps
 
     def _on_step(self) -> bool:
@@ -172,40 +197,54 @@ class VideoEvalCallback(BaseCallback):
         return True
 
     def _record_video(self) -> None:
-        if isinstance(self.training_env, VecNormalize) and isinstance(self.video_env, VecNormalize):
-            sync_envs_normalization(self.training_env, self.video_env)
+        step = self.num_timesteps
+        episode_dir = os.path.join(self.video_dir, f"step_{step}")
+        os.makedirs(episode_dir, exist_ok=True)
 
-        frames = []
-        obs = self.video_env.reset()
-        done = False
+        raw_env = gym.make(self.env_id, render_mode="rgb_array", **self.env_kwargs)
+        fps = raw_env.metadata.get("render_fps", 15)
+
+        video_env = RecordVideo(
+            raw_env,
+            video_folder=episode_dir,
+            episode_trigger=lambda episode_id: True,
+            name_prefix=f"ppo_eval_step_{step}",
+        )
+
+        obs, _info = video_env.reset()
+        terminated = truncated = False
         steps = 0
+        episode_reward = 0.0
 
-        while not done and steps < self.max_steps:
-            action, _ = self.model.predict(obs, deterministic=True)
-            obs, _reward, done_arr, _infos = self.video_env.step(action)
-            done = bool(done_arr[0])
+        while not (terminated or truncated) and steps < self.max_steps:
+            model_obs = obs
+            if self.norm_env is not None:
+                # normalize_obs expects a batch; wrap/unwrap a single obs.
+                model_obs = self.norm_env.normalize_obs(obs[None, ...])[0]
+            action, _ = self.model.predict(model_obs, deterministic=True)
+            obs, reward, terminated, truncated, _info = video_env.step(action)
+            episode_reward += float(reward)
             steps += 1
-            frame = self.raw_env.render()
-            if frame is not None:
-                frames.append(frame)
 
-        if not frames:
-            print(f"[video-eval] step {self.num_timesteps}: no frames captured (render() returned None).")
+        video_env.close()
+
+        video_files = sorted(glob.glob(os.path.join(episode_dir, "*.mp4")))
+        if not video_files:
+            print(f"[video-eval] step {step}: no .mp4 found in {episode_dir}")
             return
 
-        os.makedirs(self.save_dir, exist_ok=True)
-        mp4_path = os.path.join(self.save_dir, f"eval_step_{self.num_timesteps}.mp4")
-
-        try:
-            imageio.mimsave(mp4_path, frames, fps=self.fps)
-        except Exception as e:
-            print(f"[video-eval] step {self.num_timesteps}: failed to write {mp4_path}: {e}")
-            return
-
-        print(f"[video-eval] step {self.num_timesteps}: saved {mp4_path} ({len(frames)} frames @ {self.fps} fps)")
+        mp4_path = video_files[0]
+        print(f"[video-eval] step {step}: saved {mp4_path} ({steps} steps, return={episode_reward:.2f})")
 
         if wandb.run is not None:
-            wandb.log({"eval/video": wandb.Video(mp4_path, fps=self.fps, format="mp4")}, step=self.num_timesteps)
+            wandb.log(
+                {
+                    "eval/video": wandb.Video(mp4_path, fps=fps, format="mp4"),
+                    "eval/video_episode_return": episode_reward,
+                    "eval/video_episode_steps": steps,
+                },
+                step=step,
+            )
 
 # ============================================================
 # Main Training
@@ -267,9 +306,6 @@ def main() -> None:
 
     eval_env = DummyVecEnv([make_env(0, seed=1000)])
     eval_env = VecNormalize(eval_env, norm_obs=True, norm_reward=False, training=False)
-
-    video_env = DummyVecEnv([make_env(0, seed=2000, env_kwargs={"render_mode": "rgb_array"})])
-    video_env = VecNormalize(video_env, norm_obs=True, norm_reward=False, training=False)
 
     model = PPO(
         policy=config["policy"],
@@ -339,9 +375,14 @@ def main() -> None:
     )
 
     video_eval_callback = VideoEvalCallback(
-        video_env=video_env,
-        save_dir=video_dir,
+        env_id=ENV_ID,
+        video_dir=video_dir,
         record_every_n_steps=checkpoint_freq,
+        # train_env is the VecNormalize wrapper around the SubprocVecEnv;
+        # its running obs/reward stats get synced each _on_step via
+        # sync_envs_normalization-equivalent behavior -- here we just read
+        # from it directly at record time, so no separate sync call needed.
+        norm_env=train_env,
         max_steps=1000,
         verbose=1,
     )
@@ -376,7 +417,6 @@ def main() -> None:
     finally:
         train_env.close()
         eval_env.close()
-        video_env.close()
         run.finish()
 
 # ============================================================
