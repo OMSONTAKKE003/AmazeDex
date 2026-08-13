@@ -75,7 +75,7 @@ class RewardCurriculumManager:
     Manages training progress and smoothly shifts reward weights, margins,
     and decay temperatures as training progresses from Step 0 to total_training_steps.
     """
-    def __init__(self, total_training_steps: int = 1_000_000):
+    def __init__(self, total_training_steps: int = 40_000_000):
         self.total_steps = total_training_steps
         self.current_step = 0
 
@@ -282,7 +282,7 @@ class AmazeDexCubeGraspEnv(MujocoEnv):
         self,
         model_path: str = os.path.join("resources", "scene.xml"),
         render_mode: str | None = None,
-        total_training_steps: int = 1_000_000,
+        total_training_steps: int = 40_000_000,
         randomize_target: bool = True,
         max_steps: int = MAX_STEPS,
     ):
