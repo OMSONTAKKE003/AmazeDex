@@ -29,6 +29,27 @@ JOINT_NAMES = [
 TIP_SITE_NAMES = ["tip1", "tip2", "tip3", "tip4"]
 CUBE_BODY_NAME = "cube"
 
+# The 6 axis-aligned "face up" target orientations, in MuJoCo's [w, x, y, z]
+# convention. Each represents the cube resting with one face pointing +Z
+# (world up) after being rotated from the default +Z-up pose.
+FACE_UP_QUATS = np.array([
+    [1.0,     0.0,     0.0,     0.0],     # +Z face up (default / identity)
+    [0.0,     1.0,     0.0,     0.0],     # -Z face up (180° roll)
+    [0.7071,  0.0,     0.7071,  0.0],     # +X face up (90° pitch)
+    [0.7071,  0.0,    -0.7071,  0.0],     # -X face up (-90° pitch)
+    [0.7071, -0.7071,  0.0,     0.0],     # +Y face up (-90° roll)
+    [0.7071,  0.7071,  0.0,     0.0],     # -Y face up (90° roll)
+], dtype=np.float64)
+
+# Index 0 (+Z / default) is the cube's starting pose, so it's excluded from
+# the sampling pool -- there's no reorientation task if target == start.
+# Index 1 (-Z / upside-down) is a full 180° flip from default -- hardest.
+# Indices 2-5 (+X/-X/+Y/-Y) are 90° pitch/roll away from default -- easiest
+# non-trivial targets, since they require only a single quarter-turn.
+FACE_EASY_INDICES = np.array([2, 3, 4, 5])   # 90° from default
+FACE_HARD_INDICES = np.array([1])            # 180° from default
+FACE_ALL_INDICES = np.concatenate([FACE_EASY_INDICES, FACE_HARD_INDICES])
+
 FRAME_SKIP = 1
 MAX_STEPS = 800
 
@@ -86,6 +107,19 @@ class RewardCurriculumManager:
         self.forbidden_weight_start = 0.5
         self.forbidden_weight_end = 2.0
 
+        # --- 5. Phase Boundaries (fractions of total_training_steps) ---
+        # Phase 1 [0, phase_lift_start): grasp only, ori_weight pinned at 0,
+        #   no target face sampled (agent just learns to approach/grip).
+        # Phase 2 [phase_lift_start, phase_reorient_start): grasp margin
+        #   keeps tightening, lift bonus already rewards getting the cube
+        #   off the table; ori_weight still pinned at 0.
+        # Phase 3 [phase_reorient_start, 1.0]: ori_weight ramps 0 -> end,
+        #   easy (90°) target faces unlock at phase_reorient_start, hard
+        #   (180°) faces unlock at phase_hard_face_start.
+        self.phase_lift_start = 0.15
+        self.phase_reorient_start = 0.40
+        self.phase_hard_face_start = 0.70
+
     def step_clock(self):
         """Advances the training clock by 1 step (local fallback)."""
         self.current_step += 1
@@ -104,7 +138,10 @@ class RewardCurriculumManager:
         return min(1.0, self.current_step / max(1, self.total_steps))
 
     def get_grasp_margin(self) -> float:
-        p = self._get_progress()
+        # Margin finishes tightening by the start of phase 3, so grasp
+        # difficulty doesn't keep increasing on top of the new reorient task.
+        p = min(self._get_progress(), self.phase_reorient_start) / self.phase_reorient_start
+        p = min(1.0, p)
         return self.grasp_margin_start + p * (self.grasp_margin_end - self.grasp_margin_start)
 
     def get_grasp_weight(self) -> float:
@@ -113,7 +150,24 @@ class RewardCurriculumManager:
 
     def get_ori_weight(self) -> float:
         p = self._get_progress()
-        return self.ori_weight_start + p * (self.ori_weight_end - self.ori_weight_start)
+        if p < self.phase_reorient_start:
+            return 0.0
+        # Ramp ori_weight over the remaining fraction of training once
+        # phase 3 begins, rather than over the whole run.
+        adjusted_p = (p - self.phase_reorient_start) / (1.0 - self.phase_reorient_start)
+        return self.ori_weight_start + adjusted_p * (self.ori_weight_end - self.ori_weight_start)
+
+    def get_face_sampling_pool(self) -> np.ndarray:
+        """No target face is meaningfully sampled until phase 3 begins --
+        callers should check is_reorient_phase_active() first and hold
+        target_quat at the default pose otherwise."""
+        p = self._get_progress()
+        if p < self.phase_hard_face_start:
+            return FACE_EASY_INDICES
+        return FACE_ALL_INDICES
+
+    def is_reorient_phase_active(self) -> bool:
+        return self._get_progress() >= self.phase_reorient_start
 
     def get_current_temperature(self) -> float:
         p = self._get_progress()
@@ -254,6 +308,7 @@ class AmazeDexCubeGraspEnv(MujocoEnv):
         self.prev_action = np.zeros(8, dtype=np.float32)
         self.steps = 0
         self.target_quat = np.array([1.0, 0.0, 0.0, 0.0])
+        self.target_face_idx = 0
 
     def set_curriculum_step(self, step: int):
         """Called externally (e.g. from a callback) to sync curriculum
@@ -266,13 +321,14 @@ class AmazeDexCubeGraspEnv(MujocoEnv):
         self.prev_action[:] = 0.0
         self.steps = 0
 
-        if self.randomize_target:
-            angle = self.np_random.uniform(-np.pi, np.pi)
-            self.target_quat = np.array(
-                [np.cos(angle / 2.0), 0.0, 0.0, np.sin(angle / 2.0)]
-            )
+        if self.randomize_target and self.curriculum.is_reorient_phase_active():
+            pool = self.curriculum.get_face_sampling_pool()
+            face_idx = int(self.np_random.choice(pool))
+            self.target_quat = FACE_UP_QUATS[face_idx].copy()
+            self.target_face_idx = face_idx
         else:
-            self.target_quat = np.array([1.0, 0.0, 0.0, 0.0])
+            self.target_quat = FACE_UP_QUATS[0].copy()
+            self.target_face_idx = 0
 
     def _fingertip_distances(self) -> np.ndarray:
         cube_pos = self.data.body(CUBE_BODY_NAME).xpos
@@ -349,6 +405,16 @@ class AmazeDexCubeGraspEnv(MujocoEnv):
         if self.render_mode == "human":
             self.render()
 
+        progress = self.curriculum._get_progress()
+        if progress < self.curriculum.phase_lift_start:
+            phase_name = "grasp"
+        elif progress < self.curriculum.phase_reorient_start:
+            phase_name = "grasp_lift"
+        elif progress < self.curriculum.phase_hard_face_start:
+            phase_name = "reorient_easy"
+        else:
+            phase_name = "reorient_hard"
+
         info = {
             "grasp_reward": grasp_reward,
             "lift_reward": lift_reward,
@@ -359,11 +425,13 @@ class AmazeDexCubeGraspEnv(MujocoEnv):
             "dropped": dropped,
             "success": success,
             "is_success": success,
-            "curriculum_progress": self.curriculum._get_progress(),
+            "curriculum_progress": progress,
             "grasp_margin": margin,
             "grasp_weight": grasp_w,
             "ori_weight": ori_w,
             "temperature": temperature,
+            "target_face_idx": self.target_face_idx,
+            "training_phase": phase_name,
         }
 
         return self._get_obs(), reward, terminated, truncated, info
