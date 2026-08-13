@@ -63,7 +63,7 @@
       <geom type="mesh" class="visual" pos="-0.00800001 -0.030595 0.0541156" quat="0.468543 0.529592 0.468543 0.529592" mesh="sts3032" material="sts3032_material"/>
       
       <geom type="mesh" class="visual" pos="-0.0115 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5" mesh="r_wrist_interface" material="r_wrist_interface_material"/>
-      <geom type="mesh" class="collision" pos="-0.0115 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5" mesh="r_wrist_interface"/>
+      <geom name="palm_base" type="mesh" class="collision" pos="-0.0115 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5" mesh="r_wrist_interface"/>
 
       <geom type="mesh" class="visual" pos="7.5027e-05 0.00786953 0.0332" quat="0.819152 -0 -0 -0.573576" mesh="sts3032" material="sts3032_material"/>
       <geom type="mesh" class="visual" pos="-0.025 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5" mesh="bushing_0608_04" material="bushing_0608_04_material"/>
@@ -73,18 +73,18 @@
       <geom type="mesh" class="visual" pos="0.0280778 0.0245 0.0297" quat="0 0.573576 0.819152 0" mesh="finger_frame" material="finger_frame_material"/>
       
       <geom type="mesh" class="visual" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_4" material="part_4_material"/>
-      <geom type="mesh" class="collision" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_4"/>
+      <geom name="palm_part4" type="mesh" class="collision" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_4"/>
 
       <geom type="mesh" class="visual" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_2" material="part_2_material"/>
-      <geom type="mesh" class="collision" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_2"/>
+      <geom name="palm_part2" type="mesh" class="collision" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_2"/>
 
       <geom type="mesh" class="visual" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_1" material="part_1_material"/>
-      <geom type="mesh" class="collision" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_1"/>
+      <geom name="palm_part1" type="mesh" class="collision" pos="0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_1"/>
 
       <geom type="mesh" class="visual" pos="0.0115 -0.0245 0.1066" quat="0.5 0.5 0.5 0.5" mesh="amazing_hand_rename" material="amazing_hand_rename_material"/>
       
       <geom type="mesh" class="visual" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_3" material="part_3_material"/>
-      <geom type="mesh" class="collision" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_3"/>
+      <geom name="palm_part3" type="mesh" class="collision" pos="-0 -0 -0.0944" quat="0.5 0.5 0.5 0.5" mesh="part_3"/>
 
       <site group="3" name="closing_1 (1)_2" pos="-0.015 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5"/>
       <site group="3" name="closing_1 (1)_2_z" pos="-0.115 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5"/>
@@ -137,7 +137,8 @@
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material_f1"/>
               <geom type="mesh" class="visual" pos="-0 0 0.00225" quat="0 0.510117 -0.860105 0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip1" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
-              <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
+              <geom name="tip1_pad" class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
+
               <!-- joint -->
 
 <geom
@@ -237,7 +238,7 @@ size="0.0065"/>
               <geom type="mesh" class="visual" pos="0.0201331 -0.0157613 -0.00735" quat="0.860105 -0 0 0.510117" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <geom type="mesh" class="visual" pos="0 0 0.00225" quat="0 -0.510117 0.860105 -0" mesh="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999" material="parallel_pin_2_x_10__fee063fca0c8b40e46bbc4ffff61d999_material"/>
               <site group="3" name="tip2" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
-              <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
+              <geom name="tip2_pad" class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
               <!-- joint -->
 
 <geom
@@ -337,7 +338,7 @@ size="0.0065"/>
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal" material="distal_material"/>
               <geom type="mesh" class="visual" pos="-0.0457364 0.0189381 0.00225" quat="0.360707 -0.608186 -0.360707 -0.608186" mesh="distal_shell" material="distal_shell_material_f3"/>
               <site group="3" name="tip3" pos="0.0283456 -0.0266027 0.00225" quat="0.348133 -0.348133 0.61547 -0.61547"/>
-              <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
+              <geom name="tip3_pad" class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
               <!-- joint -->
 
 <geom
@@ -437,7 +438,7 @@ size="0.0065"/>
               <geom type="mesh" class="visual" pos="-0.0457365 0.0189379 0.00225" quat="0.360708 -0.608185 -0.360708 -0.608185" mesh="distal" material="distal_material"/>
               <geom type="mesh" class="visual" pos="0.0201332 -0.0157612 -0.00735" quat="0.860104 -0 -0 0.510119" mesh="std00447_thermoplastique_m2_5x6__configuration_default" material="std00447_thermoplastique_m2_5x6__configuration_default_material"/>
               <site group="3" name="tip4" pos="0.0283456 -0.0266027 0.00225" quat="0.61547 0.61547 0.348134 0.348134"/>
-              <geom class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
+              <geom name="tip4_pad" class="grasp_pad" pos="0.0283456 -0.0266027 0.00225"/>
               <!-- joint -->
 
 <geom
