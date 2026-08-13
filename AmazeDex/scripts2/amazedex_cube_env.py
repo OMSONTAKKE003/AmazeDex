@@ -1,318 +1,434 @@
-from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+
 import mujoco
 import numpy as np
 from gymnasium import spaces
 
 from mujoco_env import MujocoEnv
 
-ACTUATORS = [
-    "motor_finger1_1", "motor_finger1_2",
-    "motor_finger2_1", "motor_finger2_2",
-    "motor_finger3_1", "motor_finger3_2",
-    "motor_finger4_1", "motor_finger4_2",
-]
-
-JOINTS = [
-    "finger1_motor1", "finger1_motor2",
-    "finger2_motor1", "finger2_motor2",
-    "finger3_motor1", "finger3_motor2",
-    "finger4_motor1", "finger4_motor2",
-]
-
+ACTUATORS = ["motor_finger1_1", "motor_finger1_2", "motor_finger2_1", "motor_finger2_2",
+             "motor_finger3_1", "motor_finger3_2", "motor_finger4_1", "motor_finger4_2"]
+JOINTS = ["finger1_motor1", "finger1_motor2", "finger2_motor1", "finger2_motor2",
+          "finger3_motor1", "finger3_motor2", "finger4_motor1", "finger4_motor2"]
 TIP_SITES = ["tip1", "tip2", "tip3", "tip4"]
+N_JOINTS = 8
 
-FACENORMALS = np.array([
-    [0.0, 0.0, 1.0],   # Face 0: Top (+Z)
-    [0.0, 0.0, -1.0],  # Face 1: Bottom (-Z)
-    [0.0, 1.0, 0.0],   # Face 2: Front (+Y)
-    [0.0, -1.0, 0.0],  # Face 3: Back (-Y)
-    [1.0, 0.0, 0.0],   # Face 4: Right (+X)
-    [-1.0, 0.0, 0.0],  # Face 5: Left (-X)
-], dtype=np.float32)
+MODEL_PATH = os.environ.get(
+    "AMAZEDEX_MODEL_PATH",
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "scene.xml"),
+)
 
-FACENAMES = {0: "1", 1: "2", 2: "3", 3: "4", 4: "5", 5: "6"}
+FACE_NORMALS = np.array([[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]],
+                         dtype=np.float32)
+FACE_NAMES = ["+Z", "-Z", "+Y", "-Y", "+X", "-X"]
+DICE_NUMBER = [5, 0, 4, 2, 1, 3]  # DICE_NUMBER[face_index] -> printed number
 
-CURRICULUM_STAGES = ["reach", "touch", "grasp", "lift", "rotate"]
+CUBE_LOCAL_CENTER = np.array([0, 0, 0], dtype=np.float32)  # calibrated cube-body -> geometric-center offset
 
-DEFAULT_MODEL_PATH = r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\resources\scene.xml"
-CUBE_HALF_EXTENT = np.array([0.02, 0.02, 0.02], dtype=np.float64)
+# Observation scaling (keeps every obs component roughly in [-1, 1]).
+JVEL_SCALE = 5.0
 
-DEFAULT_ORIENTATION_WEIGHT = 11.0
-DEFAULT_SUCCESS_BONUS = 30.0
-DEFAULT_SUCCESS_ALIGNMENT_THRESHOLD = 0.97
-DEFAULT_SUCCESS_HOLD_STEPS = 12
-DEFAULT_DROP_PENALTY = 20.0
-DEFAULT_ACTION_RATE_WEIGHT = 0.0007
-DEFAULT_JOINT_LIMIT_WEIGHT = 0.1
-DEFAULT_JOINT_LIMIT_MARGIN_RAD = 0.05
-DEFAULT_DRIFT_WEIGHT = 0.08
-DEFAULT_IDLE_WEIGHT = 0.15
-DEFAULT_IDLE_SPEED_MARGIN_RAD_S = 0.15
+# Grasp closing.
+HAND_CLOSE_FRAC = 0.63
+HAND_CLOSE_JITTER = 0.005
+CLOSE_PROBE_FRAC = 0.3
+GRASP_OPEN_FRAC = 0.05
+SETTLE_STEPS = 30
+MAX_CTRL_RATE_FRAC = 0.16  # hard servo-speed limit, independent of the policy
+
+
+@dataclass(frozen=True)
+class Cfg:
+    max_steps: int = 500
+
+    # -- drop detection (persistence required so a single contact spike can't
+    #    trigger it -- guardrail against noisy false terminations) --
+    xy_drop_m: float = 0.18
+    z_drop_m: float = 0.18
+    drop_persist_steps: int = 6
+
+    # -- reset randomization --
+    pos_jitter_m: float = 0.0001
+    yaw_jitter_rad: float = float(np.radians(1.0))
+
+    # -- low-level control shaping (NOT reward -- this just keeps actions
+    #    from teleporting the servos) --
+    grasp_band_frac: float = 0.80
+    action_lpf: float = 0.6
+    max_ctrl_rate_frac: float = MAX_CTRL_RATE_FRAC
+
+    # === the only 3 reward terms ===
+    k_rotate: float = 3.9              # alpha_1
+    rotate_clip_rad: float = 0.30      # clip per-step progress -- guardrail, see _reward()
+    success_bonus: float = 16.0        # alpha_2
+    drop_penalty: float = 20.0         # alpha_3 (applied as a flat, one-time negative)
+
+    # -- success detection hysteresis (guardrail against reward hacking by
+    #    oscillating across the threshold to farm the bonus repeatedly) --
+    success_theta_rad: float = 0.50
+    success_hold_steps: int = 2
+    success_max_angvel: float = 4.0
+    success_rearm_theta_rad: float = 0.6
+    min_steps_between_success: int = 2
+
+
+CFG = Cfg()
+
+
+# ---------------------------------------------------------------------------
+# Minimal quaternion helpers.
+# ---------------------------------------------------------------------------
+def _qmul(q1, q2):
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+    return np.array([w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+                      w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+                      w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+                      w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2])
+
+
+def _quat_to_mat(q):
+    w, x, y, z = q
+    return np.array([
+        [1 - 2 * (y * y + z * z), 2 * (x * y - z * w), 2 * (x * z + y * w)],
+        [2 * (x * y + z * w), 1 - 2 * (x * x + z * z), 2 * (y * z - x * w)],
+        [2 * (x * z - y * w), 2 * (y * z + x * w), 1 - 2 * (x * x + y * y)],
+    ])
+
+
+def _q_from_vecs(v_from, v_to):
+    v_from, v_to = v_from / np.linalg.norm(v_from), v_to / np.linalg.norm(v_to)
+    d = float(np.dot(v_from, v_to))
+    if d > 1 - 1e-8:
+        return np.array([1.0, 0, 0, 0])
+    if d < -1 + 1e-8:
+        axis = np.cross(v_from, [1.0, 0, 0])
+        if np.linalg.norm(axis) < 1e-6:
+            axis = np.cross(v_from, [0, 1.0, 0])
+        axis /= np.linalg.norm(axis)
+        return np.array([0.0, *axis])
+    axis = np.cross(v_from, v_to)
+    q = np.array([1 + d, *axis])
+    return q / np.linalg.norm(q)
+
+
+def _require(model, kind, names):
+    """Fail loudly and specifically instead of a cryptic mujoco KeyError,
+    if robot.xml / scene.xml drift out of sync with this file."""
+    getter = {"joint": model.joint, "actuator": model.actuator,
+              "site": model.site, "body": model.body}[kind]
+    for n in names:
+        try:
+            getter(n)
+        except KeyError:
+            raise KeyError(f"{kind} '{n}' not found in the MJCF model. "
+                            f"robot.xml / scene.xml no longer matches amazedex_cube_env.py.")
 
 
 class AmazeDexCubeEnv(MujocoEnv):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 15}
 
-    def __init__(
-        self,
-        model_path: str = DEFAULT_MODEL_PATH,
-        render_mode: str | None = None,
-        orientation_weight: float = DEFAULT_ORIENTATION_WEIGHT,
-        success_bonus: float = DEFAULT_SUCCESS_BONUS,
-        success_alignment_threshold: float = DEFAULT_SUCCESS_ALIGNMENT_THRESHOLD,
-        success_hold_steps: int = DEFAULT_SUCCESS_HOLD_STEPS,
-        drop_penalty: float = DEFAULT_DROP_PENALTY,
-        action_rate_weight: float = DEFAULT_ACTION_RATE_WEIGHT,
-        joint_limit_weight: float = DEFAULT_JOINT_LIMIT_WEIGHT,
-        joint_limit_margin_rad: float = DEFAULT_JOINT_LIMIT_MARGIN_RAD,
-        drift_weight: float = DEFAULT_DRIFT_WEIGHT,
-        idle_weight: float = DEFAULT_IDLE_WEIGHT,
-        idle_speed_margin_rad_s: float = DEFAULT_IDLE_SPEED_MARGIN_RAD_S,
-        **kwargs,
-    ):
+    def __init__(self, model_path=MODEL_PATH, render_mode=None, randomize=False, cfg=CFG, **kw):
         if not os.path.exists(model_path):
-            raise FileNotFoundError(f"Could not find MuJoCo model at '{model_path}'.")
-
+            raise FileNotFoundError(model_path)
         super().__init__(model_path, frame_skip=10, render_mode=render_mode)
-        
-        self.actids = np.array([self.model.actuator(name).id for name in ACTUATORS])
-        self.jointids = np.array([self.model.joint(name).id for name in JOINTS])
-        self.qposids = np.array([self.model.joint(name).qposadr[0] for name in JOINTS])
-        self.qvelids = np.array([self.model.joint(name).dofadr[0] for name in JOINTS])
+        self.cfg = cfg
+        self.randomize = randomize
+
+        _require(self.model, "actuator", ACTUATORS)
+        _require(self.model, "joint", JOINTS)
+        _require(self.model, "site", TIP_SITES)
+        _require(self.model, "body", ["cube"])
+
+        self.actids = np.array([self.model.actuator(n).id for n in ACTUATORS])
+        self.qposids = np.array([self.model.joint(n).qposadr[0] for n in JOINTS])
+        self.qvelids = np.array([self.model.joint(n).dofadr[0] for n in JOINTS])
         self.cubeid = self.model.body("cube").id
+        cj = self.model.body("cube").jntadr[0]
+        self.cube_qpos = self.model.jnt_qposadr[cj]
+        self.cube_dof = self.model.jnt_dofadr[cj]
 
-        cube_jnt = self.model.body("cube").jntadr[0]
-        self.cube_qposadr = self.model.jnt_qposadr[cube_jnt]
-        self.cube_dofadr = self.model.jnt_dofadr[cube_jnt]
+        self.tip_sites = [self.model.site(n).id for n in TIP_SITES]
+        tip_bodies = [self.model.site_bodyid[s] for s in self.tip_sites]
+        self.tip_geoms = [{g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] == b}
+                           for b in tip_bodies]
+        self.cube_geoms = {g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] == self.cubeid}
+        self.base_friction = self.model.geom_friction.copy()
 
-        self.tipsiteids = [
-            self.model.site(name).id
-            for name in TIP_SITES
-            if name in [self.model.site(i).name for i in range(self.model.nsite)]
-        ]
-        self.tipbodyids = np.array([self.model.site_bodyid[s] for s in self.tipsiteids])
+        # Palm-center calibration: whatever position the cube is authored at
+        # in scene.xml (geometric center of the palm, per the MJCF) is taken
+        # as the nominal spawn point every reset.
+        self.nominal_cube_center = (self.init_qpos[self.cube_qpos:self.cube_qpos + 3].copy()
+                                     + CUBE_LOCAL_CENTER)
 
-        self.jointlimited = self.model.jnt_limited[self.jointids].astype(bool)
-        self.jointrange = self.model.jnt_range[self.jointids].copy()
-        limits = self.model.actuator_ctrlrange[self.actids]
-        self.minctrl, self.maxctrl = limits[:, 0], limits[:, 1]
+        lims = self.model.actuator_ctrlrange[self.actids]
+        self.ctrl_lo, self.ctrl_hi = lims[:, 0], lims[:, 1]
+        self.ctrl_mid = (self.ctrl_lo + self.ctrl_hi) / 2
+        self.ctrl_half = (self.ctrl_hi - self.ctrl_lo) / 2
 
-        self.action_space = spaces.Box(-1.0, 1.0, shape=(8,), dtype=np.float32)
-        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(45,), dtype=np.float32)
+        self.action_space = spaces.Box(-1.0, 1.0, shape=(N_JOINTS,), dtype=np.float32)
+        # 8 joint pos + 8 joint vel + 8 last action + 3 cube "up" (local frame)
+        # + 6 target one-hot. The last 9 are the minimum goal signal a
+        # goal-conditioned policy needs -- everything else stays out of obs.
+        self.observation_space = spaces.Box(-np.inf, np.inf, shape=(33,), dtype=np.float32)
 
-        self.lastaction = np.zeros(8, dtype=np.float32)
-        self.stepcount = 0
-        self.startz = 0.0
-        self.startpos = np.zeros(3)
-        self.startface = 5
-        self.targetface = 1
-        self.curriculumstage = "reach"
-        self.successstreak = 0
-        self.prev_alignment = 0.0
+        self.last_action = np.zeros(N_JOINTS, np.float32)
+        self.filtered_ctrl = np.zeros(N_JOINTS, np.float32)
+        self.grasp_frac = np.zeros(N_JOINTS, np.float32)
+        self.step_count = 0
+        self.target_face = 0
+        self.start_face = 0
+        self.start_pos = np.zeros(3)
+        self.prev_theta = np.pi
+        self._armed = True
+        self._hold = 0
+        self._xy_over_steps = 0
+        self._z_over_steps = 0
+        self._last_success_step = -10_000
+        self.close_sign = self._detect_close_sign()
 
-        self.orientation_weight = float(orientation_weight)
-        self.success_bonus = float(success_bonus)
-        self.success_alignment_threshold = float(success_alignment_threshold)
-        self.success_hold_steps = int(success_hold_steps)
-        self.drop_penalty = float(drop_penalty)
-        self.action_rate_weight = float(action_rate_weight)
-        self.joint_limit_weight = float(joint_limit_weight)
-        self.joint_limit_margin_rad = float(joint_limit_margin_rad)
-        self.drift_weight = float(drift_weight)
-        self.idle_weight = float(idle_weight)
-        self.idle_speed_margin_rad_s = float(idle_speed_margin_rad_s)
+    # -- geometry -----------------------------------------------------------
+    def _cube_center_world(self):
+        R = self.data.xmat[self.cubeid].reshape(3, 3)
+        return self.data.xpos[self.cubeid] + R @ CUBE_LOCAL_CENTER
 
-    def setcurriculumstage(self, stage: str) -> None:
-        if stage in CURRICULUM_STAGES:
-            self.curriculumstage = stage
+    def _detect_close_sign(self):
+        """Probe both actuation directions once at load time to learn which
+        sign of ctrl actually closes the fingers on *this* MJCF, instead of
+        hardcoding it."""
+        qpos_save = self.data.qpos.copy()
+        dists = {}
+        for sign in (1.0, -1.0):
+            self.data.qpos[self.qposids] = self.ctrl_mid + sign * CLOSE_PROBE_FRAC * self.ctrl_half
+            mujoco.mj_forward(self.model, self.data)
+            cpos = self._cube_center_world()
+            dists[sign] = float(np.mean([np.linalg.norm(self.data.site_xpos[s] - cpos)
+                                          for s in self.tip_sites]))
+        self.data.qpos[:] = qpos_save
+        mujoco.mj_forward(self.model, self.data)
+        return 1.0 if dists[1.0] < dists[-1.0] else -1.0
 
-    def _sampletargetface(self) -> int:
-        if self.curriculumstage == "reach":
-            return 1
-        elif self.curriculumstage == "touch":
-            return 1
-        elif self.curriculumstage == "grasp":
-            return int(np.random.choice([1, 2]))
-        elif self.curriculumstage == "lift":
-            return int(np.random.choice([1, 2, 3]))
-        else:
-            return int(np.random.choice([0, 1, 2, 3, 4, 5]))
+    @property
+    def targetface(self):
+        return self.target_face
 
-    def reset_model(self) -> None:
-        self.data.qpos[self.qposids] = 0.0
+    @targetface.setter
+    def targetface(self, value):
+        self.target_face = int(value)
+        self.prev_theta = self._theta()
+        self._armed = True
+        self._hold = 0
+
+    # -- reset ----------------------------------------------------------------
+    def reset_model(self):
+        c = self.cfg
+        qpos_open = np.clip(self.ctrl_mid + self.close_sign * GRASP_OPEN_FRAC * self.ctrl_half,
+                             self.ctrl_lo, self.ctrl_hi)
+        self.data.qpos[self.qposids] = qpos_open
         self.data.qvel[self.qvelids] = 0.0
+        self.data.ctrl[self.actids] = qpos_open
 
-        cube_pos = self.init_qpos[self.cube_qposadr : self.cube_qposadr + 3].copy()
-        cube_quat = self.init_qpos[self.cube_qposadr + 3 : self.cube_qposadr + 7].copy()
+        base_quat = self.init_qpos[self.cube_qpos + 3:self.cube_qpos + 7].copy()
 
-        self.data.qpos[self.cube_qposadr : self.cube_qposadr + 3] = cube_pos
-        self.data.qpos[self.cube_qposadr + 3 : self.cube_qposadr + 7] = cube_quat
-        self.data.qvel[self.cube_dofadr : self.cube_dofadr + 6] = 0.0
+        # Random start face keeps the policy general; the palm-center
+        # position is always the one authored in scene.xml (never randomized
+        # away from it -- only jittered by a fraction of a millimeter).
+        start_face = int(np.random.choice(6))
+        self.start_face = start_face
+        self.target_face = int(np.random.choice([f for f in range(6) if f != start_face]))
 
-        self.lastaction[:] = 0.0
-        self.stepcount = 0
-        self.successstreak = 0
-        
-        self.startface = 5
-        self.targetface = self._sampletargetface()
+        up_q = _q_from_vecs(FACE_NORMALS[start_face], np.array([0.0, 0.0, 1.0]))
+        quat = _qmul(up_q, base_quat)
+        yaw = np.random.uniform(-c.yaw_jitter_rad, c.yaw_jitter_rad)
+        quat = _qmul(np.array([np.cos(yaw / 2), 0, 0, np.sin(yaw / 2)]), quat)
+        quat /= np.linalg.norm(quat)
+
+        target_center = self.nominal_cube_center.copy()
+        target_center[:2] += np.random.uniform(-c.pos_jitter_m, c.pos_jitter_m, 2)
+        R = _quat_to_mat(quat)
+        pos = target_center - R @ CUBE_LOCAL_CENTER
+
+        self.data.qpos[self.cube_qpos:self.cube_qpos + 3] = pos
+        self.data.qpos[self.cube_qpos + 3:self.cube_qpos + 7] = quat
+        self.data.qvel[self.cube_dof:self.cube_dof + 6] = 0.0
+
+        if self.randomize:
+            self.model.geom_friction[:] = self.base_friction * np.random.uniform(0.8, 1.2)
+
+        self.step_count = 0
+        self._armed = True
+        self._hold = 0
+        self._xy_over_steps = 0
+        self._z_over_steps = 0
+        self._last_success_step = -10_000
 
         mujoco.mj_forward(self.model, self.data)
 
-        target_normal = self.data.xmat[self.cubeid].reshape(3, 3) @ FACENORMALS[self.targetface]
-        self.prev_alignment = float(target_normal[2])
-        pos = self.data.xpos[self.cubeid].copy()
-        self.startz = float(pos[2])
-        self.startpos = pos.copy()
+        # Ramp the grasp shut instead of teleporting to HAND_CLOSE_FRAC:
+        # a cube on a random start_face isn't rotationally symmetric to the
+        # fingertip geometry, so an instant fully-closed qpos can start
+        # already penetrating the mesh -- the contact solver then explodes
+        # that in one step. This settle loop is a fail-safe against that.
+        qpos_closed = np.clip(
+            self.ctrl_mid + self.close_sign * HAND_CLOSE_FRAC * self.ctrl_half
+            + np.random.uniform(-HAND_CLOSE_JITTER, HAND_CLOSE_JITTER, N_JOINTS),
+            self.ctrl_lo, self.ctrl_hi)
+        for i in range(SETTLE_STEPS):
+            frac = (i + 1) / SETTLE_STEPS
+            self.data.ctrl[self.actids] = qpos_open + frac * (qpos_closed - qpos_open)
+            mujoco.mj_step(self.model, self.data)
 
-    def _get_obs(self) -> np.ndarray:
-        jpos = self.data.qpos[self.qposids]
-        jvel = self.data.qvel[self.qvelids]
-        target_world_normal = self.data.xmat[self.cubeid].reshape(3, 3) @ FACENORMALS[self.targetface]
-        
-        cube_pos = self.data.xpos[self.cubeid]
-        tip_pos = np.array([self.data.site_xpos[i] for i in self.tipsiteids])
-        relative_tip_pos = (tip_pos - cube_pos).flatten()
+        qpos_init = self.data.qpos[self.qposids].copy()
+        frac_init = np.clip((qpos_init - self.ctrl_mid) / self.ctrl_half, -1.0, 1.0)
+        self.grasp_frac[:] = frac_init
+        self.filtered_ctrl[:] = frac_init
+        self.last_action[:] = 0.0
 
-        onehot = np.zeros(6, dtype=np.float32)
-        onehot[self.targetface] = 1.0
+        self.prev_theta = self._theta()
+        self.start_pos = self._cube_center_world().copy()
+        return self._get_obs()
 
-        return np.concatenate([
-            jpos, jvel, self.lastaction, target_world_normal, onehot, 
-            relative_tip_pos
-        ]).astype(np.float32)
+    # -- task-relevant scalars --------------------------------------------
+    def _cube_rotmat(self):
+        return self.data.xmat[self.cubeid].reshape(3, 3)
 
-    def _get_contacts(self) -> np.ndarray:
-        contacts = np.zeros(len(self.tipsiteids), dtype=bool)
-        if self.data.ncon == 0: 
-            return contacts
-        geom_bodyid = self.model.geom_bodyid
+    def _alignment(self):
+        """cos(angle) between the target face's outward normal (rotated into
+        world frame) and world +Z -- 1.0 means the target face is on top."""
+        n = self._cube_rotmat() @ FACE_NORMALS[self.target_face]
+        return float(n[2])
+
+    def _theta(self):
+        return float(np.arccos(np.clip(self._alignment(), -1.0, 1.0)))
+
+    def _cube_angvel(self):
+        return float(np.linalg.norm(self.data.qvel[self.cube_dof + 3:self.cube_dof + 6]))
+
+    def _tip_to_cube(self):
+        cpos = self._cube_center_world()
+        return np.array([cpos - self.data.site_xpos[sid] for sid in self.tip_sites], dtype=np.float32)
+
+    def _n_tips_touching(self):
+        """Diagnostic only -- never rewarded, so the policy can't farm
+        'contact' as a proxy instead of actually rotating the cube."""
+        c_force = 0.015
+        touched = np.zeros(len(self.tip_sites), dtype=bool)
+        f6 = np.zeros(6)
         for i in range(self.data.ncon):
             con = self.data.contact[i]
-            b1, b2 = geom_bodyid[con.geom1], geom_bodyid[con.geom2]
-            if b1 != self.cubeid and b2 != self.cubeid: 
+            if con.geom1 not in self.cube_geoms and con.geom2 not in self.cube_geoms:
                 continue
-            other_body = b2 if b1 == self.cubeid else b1
-            hits = np.where(self.tipbodyids == other_body)[0]
-            if hits.size: 
-                contacts[hits] = True
-        return contacts
+            other = con.geom2 if con.geom1 in self.cube_geoms else con.geom1
+            for t, geoms in enumerate(self.tip_geoms):
+                if other in geoms:
+                    mujoco.mj_contactForce(self.model, self.data, i, f6)
+                    if abs(f6[0]) > c_force:
+                        touched[t] = True
+        return int(touched.sum())
 
-    def _get_reward(self, act: np.ndarray, dropped: bool) -> tuple[float, dict[str, float]]:
-        cube_pos = self.data.xpos[self.cubeid]
-        tip_pos = np.array([self.data.site_xpos[i] for i in self.tipsiteids])
-        all_distances = np.linalg.norm(tip_pos - cube_pos, axis=1)
-        sorted_d = np.sort(all_distances)
-        dist = 0.7 * np.mean(all_distances) + 0.3 * np.mean(sorted_d[:2])
-        r_reach = 0.9* np.exp(-30.0* dist)
+    # -- observation ---------------------------------------------------------
+    def _get_obs(self):
+        jpos = np.clip((self.data.qpos[self.qposids] - self.ctrl_mid) / self.ctrl_half, -1.0, 1.0)
+        jvel = np.clip(self.data.qvel[self.qvelids] / JVEL_SCALE, -1.0, 1.0)
 
-        contacts = self._get_contacts()
-        n_contacts = int(np.sum(contacts))
-        contact_scales = {0: 0.0, 1: 1.0, 2: 3.2, 3: 3.2, 4: 3.2}
-        r_contact = contact_scales.get(n_contacts, 5.0)
+        cube_up_local = self._cube_rotmat().T @ np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        onehot = np.zeros(6, np.float32)
+        onehot[self.target_face] = 1.0
 
-        lift = max(0.0, cube_pos[2] - self.startz)
-        r_lift = 40.0 * lift if self.curriculumstage in ["lift", "rotate"] else 0.0
+        obs = np.concatenate([jpos, jvel, self.last_action, cube_up_local, onehot]).astype(np.float32)
 
-        target_normal = self.data.xmat[self.cubeid].reshape(3, 3) @ FACENORMALS[self.targetface]
-        alignment = float(target_normal[2])
-        progress = max(0.0, alignment - self.prev_alignment)
-        self.prev_alignment = alignment
+        # Fail-safe: a NaN/inf here means the physics step diverged
+        # (penetration blow-up, etc.). Sanitize rather than crash training,
+        # and let the caller flag the episode as unsafe via `dropped`.
+        if not np.all(np.isfinite(obs)):
+            obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
+        return obs
 
-        if self.curriculumstage == "rotate" and n_contacts >= 2:
-            r_orientation = self.orientation_weight * alignment + 8.0 * progress
-        else:
-            r_orientation = 0.0
+    # -- the 3-term reward ------------------------------------------------
+    def _reward(self, dropped):
+        c = self.cfg
 
-        # Stage-specific success validation
-        stage_success = False
-        if self.curriculumstage == "reach":
-            stage_success = dist < 0.02
-        elif self.curriculumstage == "touch":
-            stage_success = n_contacts >= 1
-        elif self.curriculumstage == "grasp":
-            stage_success = n_contacts >= 2
-        elif self.curriculumstage == "lift":
-            stage_success = lift > 0.02
-        elif self.curriculumstage == "rotate":
-            aligned_now = alignment > self.success_alignment_threshold
-            if aligned_now and n_contacts >= 2:
-                self.successstreak += 1
-            else:
-                self.successstreak = 0
-            stage_success = self.successstreak >= self.success_hold_steps
+        theta = self._theta()
+        # Progress term, clipped: without this clip, a single contact-solver
+        # glitch that teleports theta can hand the policy a huge one-step
+        # reward it didn't earn -- the paper's structure assumes smooth
+        # progress, this clip enforces that assumption holds numerically.
+        d_theta = float(np.clip(self.prev_theta - theta, -c.rotate_clip_rad, c.rotate_clip_rad))
+        r_rotate = c.k_rotate * d_theta
+        self.prev_theta = theta
 
-        r_success = self.success_bonus if stage_success else 0.0
+        r_drop = -c.drop_penalty if dropped else 0.0
 
-        r_joint, r_action, r_drift, r_idle, r_drop = 0.0, 0.0, 0.0, 0.0, 0.0
-        
-        if self.curriculumstage in ["grasp", "lift", "rotate"]:
-            if np.any(self.jointlimited):
-                jpos = self.data.qpos[self.qposids]
-                lo, hi = self.jointrange[:, 0], self.jointrange[:, 1]
-                m = max(self.joint_limit_margin_rad, 1e-6)
-                violation = np.where(self.jointlimited, np.maximum(np.clip(m-(jpos-lo),0.0,m)/m, np.clip(m-(hi-jpos),0.0,m)/m)**2, 0.0)
-                r_joint = self.joint_limit_weight * float(np.sum(violation))
+        angvel = self._cube_angvel()
+        settled = theta < c.success_theta_rad and angvel < c.success_max_angvel
+        r_success, success = 0.0, False
+        steps_since = self.step_count - self._last_success_step
+        if self._armed and steps_since >= c.min_steps_between_success:
+            # Must stay settled for `success_hold_steps` in a row -- guards
+            # against farming the bonus by flickering across the threshold.
+            self._hold = self._hold + 1 if settled else 0
+            if self._hold >= c.success_hold_steps:
+                r_success = c.success_bonus
+                success = True
+                self._armed = False
+                self._hold = 0
+                self._last_success_step = self.step_count
+                # Never stop the episode on success: immediately hand out a
+                # new target so the policy keeps rotating instead of
+                # settling into a "reached goal once, now sit still" minimum.
+                self.target_face = int(np.random.choice([f for f in range(6) if f != self.target_face]))
+                self.prev_theta = self._theta()
+        elif not self._armed and theta > c.success_rearm_theta_rad:
+            # Must visibly leave the target before it can be re-claimed --
+            # closes the same flicker exploit from the other side.
+            self._armed = True
 
-            r_action = self.action_rate_weight * float(np.sum(np.square(act - self.lastaction)))
-            r_drift = self.drift_weight * float(np.linalg.norm(cube_pos[:2] - self.startpos[:2]))
-
-            if n_contacts >= 2 and not (self.curriculumstage == "rotate" and alignment > self.success_alignment_threshold):
-                speed = float(np.mean(np.abs(self.data.qvel[self.qvelids])))
-                r_idle = self.idle_weight * np.clip((self.idle_speed_margin_rad_s - speed) / max(self.idle_speed_margin_rad_s, 1e-6), 0.0, 1.0)
-            else:
-                r_idle = 0.0
-
-            r_drop = self.drop_penalty if dropped else 0.0
-
-        # Integrated r_success across all stages to incentivize crossing the finish line
-        if self.curriculumstage == "reach":
-            total = r_reach + r_success - r_action
-        elif self.curriculumstage == "touch":
-            total = r_reach + r_contact + r_success - r_action
-        elif self.curriculumstage == "grasp":
-            total = r_reach + r_contact + r_success - r_joint - r_action - r_drop
-        elif self.curriculumstage == "lift":
-            total = r_reach + r_contact + r_lift + r_success - r_joint - r_action - r_drift - r_drop
-        else:
-            total = r_reach + r_contact + r_lift + r_orientation + r_success - r_joint - r_action - r_drift - r_idle - r_drop
-
-        breakdown = {
-            "r_reach": r_reach, "r_contact": r_contact, "n_contacts": n_contacts, 
-            "r_lift": r_lift, "r_orientation": r_orientation, "r_success": r_success,
-            "r_joint": r_joint, "r_action": r_action, "r_drift": r_drift, 
-            "r_idle": r_idle, "r_drop": r_drop, "alignment": alignment, "success": stage_success
+        total = r_rotate + r_success + r_drop
+        info = {
+            "theta_rad": theta, "success": success, "dropped": dropped,
+            "target_face": self.target_face, "start_face": self.start_face,
+            "n_tips_touching": self._n_tips_touching(),
+            "reach_dist": float(np.mean(np.linalg.norm(self._tip_to_cube(), axis=1))),
+            "cube_angvel": angvel,
+            "r_rotate": r_rotate, "r_success": r_success, "r_drop": r_drop,
         }
-        return total, breakdown
+        return total, info
 
-    def step(self, action: np.ndarray):
+    # -- step ---------------------------------------------------------------
+    def step(self, action):
+        c = self.cfg
         act = np.clip(action, -1.0, 1.0).astype(np.float32)
-        ctrl = self.minctrl + (act + 1.0) * 0.5 * (self.maxctrl - self.minctrl)
-        fullctrl = np.zeros(self.model.nu)
-        fullctrl[self.actids] = ctrl
 
-        self.do_simulation(fullctrl, self.frame_skip)
-        self.stepcount += 1
+        target_frac = np.clip(self.grasp_frac + act * c.grasp_band_frac, -1.0, 1.0)
+        lpf_ctrl = c.action_lpf * target_frac + (1 - c.action_lpf) * self.filtered_ctrl
+        step_delta = np.clip(lpf_ctrl - self.filtered_ctrl, -c.max_ctrl_rate_frac, c.max_ctrl_rate_frac)
+        self.filtered_ctrl = self.filtered_ctrl + step_delta
 
-        cubepos = self.data.xpos[self.cubeid]
-        dropped = bool((self.startz - cubepos[2]) > 0.06)
+        ctrl = np.clip(self.ctrl_mid + self.filtered_ctrl * self.ctrl_half, self.ctrl_lo, self.ctrl_hi)
+        full = np.zeros(self.model.nu)
+        full[self.actids] = ctrl
+        self.do_simulation(full, self.frame_skip)
+        self.step_count += 1
 
-        reward, info = self._get_reward(act, dropped)
+        cpos = self._cube_center_world()
+        z_drop_actual = float(self.start_pos[2] - cpos[2])
+        xy_drift_actual = float(np.linalg.norm(cpos[:2] - self.start_pos[:2]))
 
-        done = dropped or info["success"]
-        truncated = self.stepcount >= 500
-        self.lastaction = act.copy()
+        self._xy_over_steps = self._xy_over_steps + 1 if xy_drift_actual > c.xy_drop_m else 0
+        self._z_over_steps = self._z_over_steps + 1 if z_drop_actual > c.z_drop_m else 0
+        dropped = (self._xy_over_steps >= c.drop_persist_steps
+                   or self._z_over_steps >= c.drop_persist_steps
+                   or not np.all(np.isfinite(cpos)))  # fail-safe: divergent sim counts as a drop
 
-        if self.render_mode == "human": 
+        reward, info = self._reward(dropped)
+        info["xy_drift_m"] = xy_drift_actual
+        info["z_drop_m_actual"] = z_drop_actual
+        self.last_action = act.copy()
+
+        done = bool(dropped)  # episode always ends on drop; never on success -- see _reward()
+        truncated = self.step_count >= c.max_steps
+        if self.render_mode == "human":
             self.render()
-
-        info.update({
-            "dropped": dropped, 
-            "startface": self.startface,
-            "targetface": self.targetface, 
-            "targetfacename": FACENAMES[self.targetface], 
-            "curriculumstage": self.curriculumstage,
-            "stage_success": info["success"]
-        })
         return self._get_obs(), reward, done, truncated, info

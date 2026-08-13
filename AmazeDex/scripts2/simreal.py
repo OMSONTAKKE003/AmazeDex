@@ -1,6 +1,6 @@
-from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 import os
 import time
@@ -8,62 +8,89 @@ import time
 import cv2
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import VecNormalize
-from stable_baselines3.common.env_util import make_vec_env
 
-from amazedex_cube_env import AmazeDexCubeEnv, FACENORMALS, FACENAMES
-from aruco_pose import CubePoseTracker
+from amazedex_cube_env import (
+    AmazeDexCubeEnv, FACE_NORMALS, FACE_NAMES, JOINTS, ACTUATORS,
+    MODEL_PATH, JVEL_SCALE, CFG,
+)
 import register_amazedex_env
+import mujoco
 
-# Control Parameters
-CONTROL_DT = 0.02  # 50 Hz control loop
-POLICY_STEPS_PER_TARGET = 250  # ~5 seconds execution per targeted face
-ACTION_SMOOTHING = 0.2  # Action EMA filter parameter
+CONTROL_DT = 0.02
 SERVO_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
-GOAL_SPEED = 0
+
+GOAL_SPEED = None
 CALIBRATION_PATH = "hand_calibration.json"
 
-# Motor control limits. MUST match the actuators' ctrlrange in robot.xml
-# (all 8 use ctrlrange="-1.396263 1.396263"), NOT the policy's [-1, 1]
-# action space - those are different scales. Previously this was left as
-# [-1, 1], which meant the real hand only ever received ~1 rad of travel
-# instead of the full ~1.4 rad range the policy was trained to command.
-CTRL_LOW = np.array([-1.396263] * 8, dtype=np.float32)
-CTRL_HIGH = np.array([1.396263] * 8, dtype=np.float32)
 
-# Tolerances
-DEADBAND_TOLERANCE_RAD = np.radians(0)  # ~3 degrees precision limit
+class HandKinematics:
+ 
+
+    def __init__(self, model_path: str = MODEL_PATH):
+        model = mujoco.MjModel.from_xml_path(model_path)
+        actids = np.array([model.actuator(n).id for n in ACTUATORS])
+        lims = model.actuator_ctrlrange[actids]
+        self.ctrl_lo, self.ctrl_hi = lims[:, 0], lims[:, 1]
+        self.ctrl_mid = (self.ctrl_lo + self.ctrl_hi) / 2
+        self.ctrl_half = (self.ctrl_hi - self.ctrl_lo) / 2
+
+
+class ActionMapper:
+
+    def __init__(self, kin: HandKinematics, cfg=CFG):
+        self.kin = kin
+        self.cfg = cfg
+        self.grasp_frac = None
+        self.filtered_ctrl = None
+
+    def start(self, current_joint_pos_rad: np.ndarray) -> None:
+        frac = np.clip((current_joint_pos_rad - self.kin.ctrl_mid) / self.kin.ctrl_half, -1.0, 1.0)
+        self.grasp_frac = frac.copy()
+        self.filtered_ctrl = frac.copy()
+
+    def action_to_ctrl(self, action: np.ndarray) -> np.ndarray:
+        action = np.clip(action, -1.0, 1.0).astype(np.float32)
+        target_frac = np.clip(self.grasp_frac + action * self.cfg.grasp_band_frac, -1.0, 1.0)
+        lpf_ctrl = (self.cfg.action_lpf * target_frac
+                    + (1 - self.cfg.action_lpf) * self.filtered_ctrl)
+        rate = self.cfg.max_ctrl_rate_frac
+        step_delta = np.clip(lpf_ctrl - self.filtered_ctrl, -rate, rate)
+        self.filtered_ctrl = self.filtered_ctrl + step_delta
+        return self.kin.ctrl_mid + self.filtered_ctrl * self.kin.ctrl_half
 
 
 def load_calibration(path: str = CALIBRATION_PATH) -> dict:
     if not os.path.exists(path):
-        print("[WARN] No calibration file found. Using default offsets.")
+        print("[WARN] No hand calibration file found. Using default offsets.")
         return {"offset_rad": [0.0] * 8, "sign": [1.0] * 8}
     with open(path) as f:
         return json.load(f)
 
 
 class HandInterface:
-    """Hardware interface to physical AmazeDex hardware via rustypot."""
+    MAX_RAW_DELTA_PER_TICK = None  # set before real deployment -- see send_ctrl()
 
-    def __init__(
-        self,
-        serial_port: str = "COM14",
-        baudrate: int = 1_000_000,
-        timeout: float = 0.6,
-        calibration: dict | None = None,
-    ):
+    def __init__(self, serial_port: str = "COM14", baudrate: int = 1_000_000,
+                 timeout: float = 0.6, calibration: dict | None = None):
         from rustypot import Scs0009PyController
+
+        if GOAL_SPEED is None or GOAL_SPEED <= 0:
+            raise ValueError(
+                "GOAL_SPEED is not configured (or is 0, which means 'unlimited speed' on "
+                "Feetech/SCS-protocol servos, not 'off'). Set it from your SCS0009 datasheet "
+                "before running on real hardware -- refusing to start rather than defaulting "
+                "to max speed."
+            )
 
         self.controller = Scs0009PyController(serial_port=serial_port, baudrate=baudrate, timeout=timeout)
         for servo_id in SERVO_IDS:
             self.controller.write_torque_enable(servo_id, 1)
-
         self.controller.sync_write_goal_speed(SERVO_IDS, [GOAL_SPEED] * len(SERVO_IDS))
 
         calib = calibration or {"offset_rad": [0.0] * 8, "sign": [1.0] * 8}
         self.offset = np.asarray(calib["offset_rad"], dtype=np.float32)
         self.sign = np.asarray(calib["sign"], dtype=np.float32)
+        self._last_raw_cmd = None
 
     def read_joint_positions(self) -> np.ndarray:
         raw = np.asarray(self.controller.sync_read_present_position(SERVO_IDS), dtype=np.float32)
@@ -71,6 +98,15 @@ class HandInterface:
 
     def send_ctrl(self, ctrl_sim_frame: np.ndarray) -> None:
         raw = self.offset + self.sign * ctrl_sim_frame
+        if self.MAX_RAW_DELTA_PER_TICK is not None:
+            if self._last_raw_cmd is None:
+                self._last_raw_cmd = raw.copy()
+            delta = np.clip(raw - self._last_raw_cmd, -self.MAX_RAW_DELTA_PER_TICK, self.MAX_RAW_DELTA_PER_TICK)
+            raw = self._last_raw_cmd + delta
+            self._last_raw_cmd = raw.copy()
+        # else: no hardware-boundary clamp configured -- ActionMapper's
+        # max_ctrl_rate_frac is the only thing protecting the servos here.
+        # Set MAX_RAW_DELTA_PER_TICK above before real deployment.
         self.controller.sync_write_goal_position(SERVO_IDS, raw.tolist())
 
     def close(self) -> None:
@@ -78,209 +114,186 @@ class HandInterface:
             self.controller.write_torque_enable(servo_id, 0)
 
 
-def policy_action_to_ctrl(action: np.ndarray) -> np.ndarray:
-    action = np.clip(action, -1.0, 1.0)
-    return CTRL_LOW + (action + 1.0) * 0.5 * (CTRL_HIGH - CTRL_LOW)
+def build_cube_obs(jpos_raw, jvel_raw, last_action, target_face, kin: HandKinematics,
+                    R_cube: np.ndarray) -> np.ndarray:
+    """Exactly mirrors AmazeDexCubeEnv._get_obs(): 27 dims, same order, same
+    normalization. R_cube comes from the AprilTag tracker (cube-local ->
+    world rotation matrix)."""
+    jpos = np.clip((jpos_raw - kin.ctrl_mid) / kin.ctrl_half, -1.0, 1.0)
+    jvel = np.clip(jvel_raw / JVEL_SCALE, -1.0, 1.0)
+    cube_up_local = (R_cube.T @ np.array([0.0, 0.0, 1.0], dtype=np.float32)).astype(np.float32)
+    onehot = np.zeros(6, dtype=np.float32)
+    onehot[target_face] = 1.0
+
+    obs = np.concatenate([jpos, jvel, last_action, cube_up_local, onehot]).astype(np.float32)
+    if not np.all(np.isfinite(obs)):
+        obs = np.nan_to_num(obs, nan=0.0, posinf=1.0, neginf=-1.0)
+    return obs
 
 
-def ctrl_to_policy_action(ctrl: np.ndarray) -> np.ndarray:
-    action = 2.0 * (ctrl - CTRL_LOW) / (CTRL_HIGH - CTRL_LOW) - 1.0
-    return np.clip(action, -1.0, 1.0)
+def theta_rad(R_cube: np.ndarray, target_face: int) -> float:
+    """Angular distance from target face-normal to world +Z -- identical
+    metric to AmazeDexCubeEnv._theta(), so success is judged the same way
+    on hardware as it was scored in training."""
+    n = R_cube @ FACE_NORMALS[target_face]
+    return float(np.arccos(np.clip(n[2], -1.0, 1.0)))
 
 
-def build_cube_obs(
-    jpos: np.ndarray,
-    jvel: np.ndarray,
-    last_action: np.ndarray,
-    target_face: int,
-    R_cube: np.ndarray = np.eye(3),
-) -> np.ndarray:
-    """
-    Constructs the 33-dimensional observation vector expected by the policy:
-    [jpos(8), jvel(8), last_action(8), target_world_normal(3), target_onehot(6)]
-    """
-    target_local_normal = FACENORMALS[target_face]
-    target_world_normal = R_cube @ target_local_normal
-
-    one_hot = np.zeros(6, dtype=np.float32)
-    one_hot[target_face] = 1.0
-
-    return np.concatenate([jpos, jvel, last_action, target_world_normal, one_hot]).astype(np.float32)
-
-
-def predict_action(model: PPO, vec_normalize: VecNormalize | None, obs: np.ndarray) -> np.ndarray:
-    if vec_normalize is not None:
-        obs = vec_normalize.normalize_obs(obs)
+def predict_action(model: PPO, obs: np.ndarray) -> np.ndarray:
     action, _ = model.predict(obs, deterministic=True)
     return np.clip(action, -1.0, 1.0)
 
 
-def execute_target_on_real_hand(
-    model: PPO,
-    vec_normalize: VecNormalize | None,
-    hand: HandInterface,
-    tracker: CubePoseTracker,
-    target_face: int,
-    cap: cv2.VideoCapture | None = None,
-) -> bool:
-    """Runs closed-loop policy execution on real hardware to orient the cube face up."""
-    print(f"\n--- REAL HAND CUBE ROTATION START -> Target Face: {FACENAMES[target_face]} ---")
+def execute_target_on_real_hand(model, hand: HandInterface, tracker, target_face: int,
+                                 kin: HandKinematics, cap: cv2.VideoCapture, cfg=CFG) -> bool:
+    """Runs until the cube settles on target_face (success) or cfg.max_steps
+    is hit (timeout). Returns True on success."""
+    print(f"\n--- Target: {FACE_NAMES[target_face]} ---")
 
+    mapper = ActionMapper(kin, cfg)
     joint_pos = hand.read_joint_positions()
+    mapper.start(joint_pos)
     prev_joint_pos = joint_pos.copy()
-    prev_action = ctrl_to_policy_action(joint_pos)
-    last_sent_ctrl = policy_action_to_ctrl(prev_action)
+    prev_action = np.zeros(8, dtype=np.float32)  # matches env reset: last_action starts at 0
+    R_cube = tracker.last_R.copy()
+    hold = 0
 
-    for _ in range(POLICY_STEPS_PER_TARGET):
+    for step in range(cfg.max_steps):
         loop_start = time.perf_counter()
-
-        # 1. Sense Real-time Kinematics
         joint_pos = hand.read_joint_positions()
         joint_vel = (joint_pos - prev_joint_pos) / CONTROL_DT
 
-        # 2. Sense Real-time Cube Orientation via AprilTags (falls back to the
-        #    last known pose if no tag is currently visible).
-        frame = None
-        if cap is not None and cap.isOpened():
-            ok, raw_frame = cap.read()
-            if ok:
-                frame = cv2.flip(raw_frame, 1)
-        R_cube = tracker.update(frame) if frame is not None else tracker.last_R
+        ok, raw_frame = cap.read()
+        frame = cv2.flip(raw_frame, 1) if ok else None
+        R_cube = tracker.update(frame) if frame is not None else R_cube
 
-        # 3. Build Policy Observation
-        obs = build_cube_obs(
-            jpos=joint_pos,
-            jvel=joint_vel,
-            last_action=prev_action,
-            target_face=target_face,
-            R_cube=R_cube,
-        )
-
-        # 4. Predict Policy Action (with saved observation normalization, if any)
-        action = predict_action(model, vec_normalize, obs)
-
-        # 5. Smooth Action & Convert to Servo Space
-        smoothed_action = ACTION_SMOOTHING * action + (1 - ACTION_SMOOTHING) * prev_action
-        smoothed_action = np.clip(smoothed_action, -1.0, 1.0)
-        target_ctrl = policy_action_to_ctrl(smoothed_action)
-
-        # Deadband locking protection
-        error = np.abs(target_ctrl - joint_pos)
-        at_target = error < DEADBAND_TOLERANCE_RAD
-        target_ctrl[at_target] = last_sent_ctrl[at_target]
-
-        # 6. Execute Motor Commands
+        obs = build_cube_obs(joint_pos, joint_vel, prev_action, target_face, kin, R_cube=R_cube)
+        action = predict_action(model, obs)
+        target_ctrl = mapper.action_to_ctrl(action)
         hand.send_ctrl(target_ctrl)
 
         prev_joint_pos = joint_pos.copy()
-        prev_action = smoothed_action.copy()
-        last_sent_ctrl = target_ctrl.copy()
+        prev_action = action.copy()
+
+        theta = theta_rad(R_cube, target_face)
+        angvel_proxy = np.linalg.norm(joint_vel)  # no direct cube-angvel sensor on the rig
+        settled = theta < cfg.success_theta_rad and angvel_proxy < cfg.success_max_angvel
+        hold = hold + 1 if settled else 0
 
         if frame is not None:
-            cv2.putText(
-                frame,
-                f"Targeting Face: {FACENAMES[target_face]}",
-                (10, 40),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                1,
-                (0, 255, 0),
-                2,
-            )
+            cv2.putText(frame, f"Target: {FACE_NAMES[target_face]}  theta={np.degrees(theta):.1f}deg  hold={hold}",
+                        (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("AmazeDex Cube Execution", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
-                print("--- EXECUTION ABORTED (quit) ---")
+                print("--- ABORTED (quit) ---")
                 return False
 
-        while time.perf_counter() - loop_start < CONTROL_DT:
-            pass
+        if hold >= cfg.success_hold_steps:
+            print(f"--- SUCCESS: {FACE_NAMES[target_face]} reached and held ({step + 1} steps) ---")
+            return True
 
-    print(f"--- TARGET REACHED / COMPLETED: Face {FACENAMES[target_face]} ---")
-    return True
+        elapsed = time.perf_counter() - loop_start
+        if elapsed < CONTROL_DT:
+            time.sleep(CONTROL_DT - elapsed)
+
+    print(f"--- TIMEOUT: target {FACE_NAMES[target_face]} not reached in {cfg.max_steps} steps ---")
+    return False
 
 
-def run_sim_step(env, model: PPO, vec_normalize: VecNormalize | None, obs: np.ndarray, target_face: int):
-    """One sim-mode step, actually driven by the trained policy (not random actions)."""
-    env.unwrapped.targetface = target_face
-    action = predict_action(model, vec_normalize, obs)
-    return env.step(action)
+def execute_target_in_sim(env, model, target_face: int, cfg=CFG) -> bool:
+    """Same run-until-success-or-timeout contract as the real-hand version,
+    for apples-to-apples testing of a target-selection loop before deploying."""
+    obs, _ = env.reset()
+    env.unwrapped.targetface = target_face  # setter resets prev_theta/armed/hold
+    obs = env.unwrapped._get_obs()
+    print(f"\n--- Target: {FACE_NAMES[target_face]} ---")
+
+    for step in range(cfg.max_steps):
+        action = predict_action(model, obs)
+        obs, reward, done, truncated, info = env.step(action)
+        env.render()
+        if info.get("success"):
+            print(f"--- SUCCESS: {FACE_NAMES[target_face]} reached and held ({step + 1} steps) ---")
+            return True
+        if done or truncated:
+            break
+    print(f"--- TIMEOUT/DROPPED: target {FACE_NAMES[target_face]} not reached ---")
+    return False
+
+
+def prompt_target_face(default: int | None) -> int | None:
+    names = ", ".join(f"{i}={n}" for i, n in enumerate(FACE_NAMES))
+    raw = input(f"Target face [{names}] (blank to quit): ").strip()
+    if raw == "":
+        return None
+    if raw.isdigit() and 0 <= int(raw) <= 5:
+        return int(raw)
+    print("Invalid input, expected 0-5.")
+    return default
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Sim-to-Real execution script for AmazeDex Cube Target environment.")
-    parser.add_argument("--model", default="models/best_model.zip", help="Path to trained PPO policy zip")
-    parser.add_argument("--vecnorm", default="models/vec_normalize.pkl", help="Path to saved VecNormalize statistics")
+    parser = argparse.ArgumentParser(description="Sim-to-real execution for AmazeDex cube rotation.")
+    parser.add_argument("--model", default="models/best_model")
     parser.add_argument("--mode", choices=["sim", "real"], default="sim")
     parser.add_argument("--port", default="COM14")
     parser.add_argument("--camera", type=int, default=0)
+    parser.add_argument("--calib", default="camera_calib.json", help="AprilTag camera+tag calibration (real mode only)")
+    parser.add_argument("--target-face", type=int, default=None, choices=range(6),
+                         help="Skip the prompt for the first attempt only; you're still asked after each attempt.")
     args = parser.parse_args()
 
     model = PPO.load(args.model, device="cpu")
-    vec_normalize = None
-    if os.path.exists(args.vecnorm):
-        vec_normalize = VecNormalize.load(args.vecnorm, make_vec_env("AmazeDex/CubeRotate-v0", n_envs=1))
-        vec_normalize.training = False
-        vec_normalize.norm_reward = False
-        print("[INFO] Successfully loaded observation normalization statistics.")
+    run_cfg = dataclasses.replace(CFG, max_steps=CFG.max_steps * 10)  # let each attempt run way longer before timing out
+    env = hand = tracker = kin = cap = None
 
-    env = hand = tracker = None
     if args.mode == "sim":
         import gymnasium as gym
-
         env = gym.make("AmazeDex/CubeRotate-v0", render_mode="human")
-        obs, _ = env.reset()
     else:
-        hand = HandInterface(serial_port=args.port, calibration=load_calibration())
-        tracker = CubePoseTracker()
+        from apriltag_pose import ApriltagCubeTracker, CameraCalib
 
-    cap = cv2.VideoCapture(args.camera)
-    if not cap.isOpened() and args.mode == "real":
-        print("[WARN] Could not open camera - real-hand cube-orientation sensing will be "
-              "frozen at identity until a camera is available.")
-
-    quit_requested = False
-    target_face = 0  # Start with Face 1 (Top / Tag 0)
-
-    print("\n=== Controls ===")
-    print("Press '0' through '5' in terminal / GUI window to switch Target Face (1 to 6).")
-    print("Press 'q' to Quit.")
-
-    while not quit_requested:
-        if args.mode == "sim":
-            obs, reward, done, truncated, info = run_sim_step(env, model, vec_normalize, obs, target_face)
-            if done or truncated:
-                obs, _ = env.reset()
-                target_face = (target_face + 1) % 6
-                env.unwrapped.targetface = target_face
-
-            env.render()
-            time.sleep(CONTROL_DT)
-        else:
-            success = execute_target_on_real_hand(
-                model=model,
-                vec_normalize=vec_normalize,
-                hand=hand,
-                tracker=tracker,
-                target_face=target_face,
-                cap=cap,
+        if not os.path.exists(args.calib):
+            raise FileNotFoundError(
+                f"{args.calib} not found. Real mode needs camera intrinsics, tag size, and the "
+                "tag-id -> face-index map (see apriltag_pose.py docstring) -- there is no safe default."
             )
-            if not success:
-                break
+        cap = cv2.VideoCapture(args.camera)
+        if not cap.isOpened():
+            raise RuntimeError("Could not open camera -- real mode requires it for cube-orientation sensing.")
 
-            target_face = (target_face + 1) % 6
+        hand = HandInterface(serial_port=args.port, calibration=load_calibration())
+        kin = HandKinematics()
+        tracker = ApriltagCubeTracker(CameraCalib.load(args.calib), FACE_NORMALS)
+        print("[INFO] Physically pre-close the hand around the cube now (matching the training grasp), "
+              "then press Enter to begin.")
+        input()
 
-        key = cv2.waitKey(1) & 0xFF
-        if key == ord("q"):
-            quit_requested = True
-        elif ord("0") <= key <= ord("5"):
-            target_face = key - ord("0")
-            print(f"[USER ACTION] Switched Target Face to: {FACENAMES[target_face]}")
+    print("\n=== AmazeDex cube rotation ===")
+    print("Enter a target face each round. The hand runs until it succeeds or times out, then asks again.")
 
-    cap.release()
-    cv2.destroyAllWindows()
-    if hand:
-        hand.close()
-    if env:
-        env.close()
+    target_face = args.target_face
+    try:
+        while True:
+            if target_face is None:
+                target_face = prompt_target_face(None)
+                if target_face is None:
+                    break
+
+            if args.mode == "sim":
+                execute_target_in_sim(env, model, target_face, cfg=run_cfg)
+            else:
+                execute_target_on_real_hand(model, hand, tracker, target_face, kin, cap, cfg=run_cfg)
+
+            target_face = None  # always re-prompt after an attempt -- no auto-cycling
+    finally:
+        if cap is not None:
+            cap.release()
+        cv2.destroyAllWindows()
+        if hand:
+            hand.close()
+        if env:
+            env.close()
 
 
 if __name__ == "__main__":
