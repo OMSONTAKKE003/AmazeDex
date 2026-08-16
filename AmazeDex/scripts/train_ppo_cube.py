@@ -1,4 +1,3 @@
-
 import argparse
 import os
 from collections import deque
@@ -28,13 +27,50 @@ CKPT_EVERY_STEPS = 20_000     # freq before -- one save_freq was covering both j
 EARLY_SAFETY_CKPT_STEPS = 20_000  # one-shot save well before the first periodic checkpoint
 
 
-INFO_KEYWORDS = ("success", "dropped", "dropped_xy", "dropped_z", "theta_rad",
+INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
+                  "dropped", "dropped_xy", "dropped_z", "theta_rad",
                   "cube_angvel", "n_tips_touching", "reach_dist", "xy_drift_m", "z_drop_m_actual",
-                  "r_action_rate")  # NEW -- watch this alongside cube_angvel to confirm the
-                                    # action-rate penalty is actually suppressing chatter over training,
+                  "r_align",  # NEW -- alignment-to-target shaping; the main dense signal
+                  "r_success",  # NEW -- sparse success bonus; mostly 0, spikes on success
+                  "r_drop",  # NEW -- drop penalty; should trend toward 0 as drops get rarer
+                  "r_action_rate",  # watch alongside cube_angvel to confirm the action-rate
+                                    # penalty is actually suppressing chatter over training,
                                     # not just adding a term that never moves
+                  "r_push", "r_commit",  # edge/corner-push shaping terms; watch that
+                                          # these actually fire and aren't just dead weight
+                  "r_edge_bonus",  # NEW -- edge/corner-vs-flat-face bonus on top of r_push/r_commit
+                  "r_reach",  # reach-in shaping; should fire mostly early in an
+                              # episode and taper to 0 once n_tips_touching > 0
+                  "r_axis_spin",  # NEW -- axis-aligned spin reward; should track success_rate
+                                   # climbing off 0, not just cube_angvel (which can be high from
+                                   # pure tumbling with no axis alignment)
+                  "r_total",  # NEW -- sum of every r_* term above; sanity-check the per-term
+                              # breakdown against this rather than trusting the sum by eye
+                  "curriculum_level")  # NEW -- 0 (adjacent-only targets, eased settle gate) or
+                                        # 1 (full target set, original gate); watch this alongside
+                                        # success_rate to confirm CurriculumCallback actually fired
 
-DIAG_PRINT_EVERY_STEPS = 20_000   # matches EvalCallback's own cadence -> a [DIAG] block prints
+# "success" (in the tuple above) is a one-step *event* from _reward() -- it
+# fires for a single timestep when the hold gate is met, and then (because
+# terminate_on_success=False) the episode keeps going with a new target.
+# VecMonitor/Monitor only snapshot the *final* step's info dict per episode,
+# so a mid-episode "success": True is invisible to anything that reads the
+# terminal info -- which is every consumer below (mean_of, ep_info_buffer).
+# "episode_success" is the sticky, episode-scoped flag the env now also
+# reports: True for the rest of the episode from the moment any success
+# event fires. success_rate and the curriculum gate must be computed from
+# "episode_success", not "success" -- see _print_and_record and
+# CurriculumCallback below. "success" stays in INFO_KEYWORDS purely so it's
+# still visible in the CSV/wandb logs for debugging.
+
+# Every per-step reward term returned by _reward() in amazedex_cube_env.py,
+# in the same order they're summed into "total" there. Logged as its own
+# rollout/reward/<key> curve below so each shaping term is individually
+# plottable in wandb/tensorboard, not just visible as a console number.
+REWARD_KEYS = ("r_align", "r_success", "r_drop", "r_action_rate",
+               "r_push", "r_commit", "r_edge_bonus", "r_reach", "r_axis_spin", "r_total")
+
+DIAG_PRINT_EVERY_STEPS = 10_000   # matches EvalCallback's own cadence -> a [DIAG] block prints
                                    # right alongside every eval print
 ROLLOUT_LOG_INTERVAL_EPISODES = 4  # SB3's off-policy default -- passed explicitly to model.learn()
                                     # below so "every time rollout is printed" has a fixed, known
@@ -46,7 +82,7 @@ SAC_HPARAMS = dict(
     learning_starts=10_000,      # pure random exploration before any gradient step
     batch_size=512,
     tau=0.005,
-    gamma=0.99,
+    gamma=0.9950,
     train_freq=1,                # collect 1 step per env (n_envs transitions), then update
     ent_coef="auto_0.1",             # auto-tuned entropy target -- resists collapsing to "freeze"
     policy_kwargs=dict(net_arch=[512, 512]),
@@ -146,8 +182,17 @@ class DiagnosticPrintCallback(BaseCallback):
         mean_z = mean_of("z_drop_m_actual")
         xy_drop_rate = mean_of("dropped_xy")
         z_drop_rate = mean_of("dropped_z")
-        success_rate = mean_of("success")
+        # episode_success, not "success" -- see the INFO_KEYWORDS comment
+        # above. "success" is a one-step event that VecMonitor's
+        # terminal-info snapshot usually misses entirely, which is why this
+        # used to read 0 even while inference was visibly succeeding.
+        success_rate = mean_of("episode_success")
         max_xy = float(np.max(self._completed_max_xy)) if self._completed_max_xy else float("nan")
+
+        # Mean of every individual reward term over the same 100-episode
+        # window as everything else above -- one number per term, keyed by
+        # the exact info-dict key so it maps 1:1 onto _reward()'s breakdown.
+        reward_means = {key: mean_of(key) for key in REWARD_KEYS}
 
         print(
             f"[DIAG {self.num_timesteps}] "
@@ -155,7 +200,8 @@ class DiagnosticPrintCallback(BaseCallback):
             f"mean_xy_drift={mean_xy:.4f} max_xy_drift={max_xy:.4f} "
             f"mean_z_drop={mean_z:.4f} "
             f"xy_drop_rate={xy_drop_rate:.3f} z_drop_rate={z_drop_rate:.3f} "
-            f"success_rate={success_rate:.3f}"
+            f"success_rate={success_rate:.3f} "
+            + " ".join(f"{key}={val:.4f}" for key, val in reward_means.items())
         )
 
         # Also feed wandb/tensorboard so the same numbers show up as curves,
@@ -167,6 +213,12 @@ class DiagnosticPrintCallback(BaseCallback):
         self.logger.record("rollout/xy_drift_m_mean", mean_xy)
         self.logger.record("rollout/xy_drift_m_max", max_xy)
         self.logger.record("rollout/z_drop_m_mean", mean_z)
+
+        # One curve per reward term, e.g. reward/r_align, reward/r_push, ...
+        # reward/r_total lets you sanity-check the breakdown against the
+        # actual summed reward instead of eyeballing whether the terms add up.
+        for key, val in reward_means.items():
+            self.logger.record(f"reward/{key}", val)
 
     def _on_step(self) -> bool:
         self._update_running_max_xy()
@@ -182,6 +234,61 @@ class DiagnosticPrintCallback(BaseCallback):
 
         if due_on_eval_cadence or due_on_rollout_cadence:
             self._print_and_record()
+        return True
+
+
+class CurriculumCallback(BaseCallback):
+    """Two-stage target-face curriculum (see set_curriculum_level in
+    amazedex_cube_env.py). Stage 0: targets sampled from ADJACENT_FACES only
+    (90 deg reorientations), eased success gate (success_theta_rad_easy /
+    success_hold_steps_easy) -- gives the sparse success bonus a real chance
+    to fire before the axis-spin/push shaping has anything to anchor to.
+    Stage 1: full adjacent+opposite target set, original (harder) gate.
+
+    One-way switch, checked on the same cadence as DiagnosticPrintCallback so
+    the same DIAG print lets you sanity-check success_rate against the
+    threshold that triggers the switch. Applies to every env passed in
+    envs_to_update via VecEnv.env_method -- pass both train_env and eval_env
+    so eval isn't silently stuck comparing against the wrong stage."""
+
+    def __init__(self, envs_to_update: list, success_rate_threshold: float = 0.05,
+                 check_every_steps: int = DIAG_PRINT_EVERY_STEPS, min_episodes: int = 20):
+        super().__init__()
+        self.envs_to_update = envs_to_update
+        self.success_rate_threshold = success_rate_threshold
+        self.check_every_steps = check_every_steps
+        self.min_episodes = min_episodes
+        self._level = 0
+
+    def _on_step(self) -> bool:
+        if self._level >= 1:
+            return True
+
+        n_envs = self.training_env.num_envs
+        check_freq_calls = max(self.check_every_steps // n_envs, 1)
+        if self.n_calls % check_freq_calls != 0:
+            return True
+
+        buf = self.model.ep_info_buffer
+        if not buf or len(buf) < self.min_episodes:
+            return True
+
+        # episode_success, not "success" -- "success" is a one-step event
+        # that VecMonitor's terminal-info snapshot usually misses (see
+        # INFO_KEYWORDS comment above), which previously left this gate
+        # stuck at 0 and the curriculum unable to ever advance to stage 1.
+        vals = [ep["episode_success"] for ep in buf if "episode_success" in ep]
+        if not vals:
+            return True
+        success_rate = float(safe_mean(vals))
+
+        if success_rate >= self.success_rate_threshold:
+            for env in self.envs_to_update:
+                env.env_method("set_curriculum_level", 1)
+            self._level = 1
+            print(f"[Curriculum] success_rate={success_rate:.3f} >= "
+                  f"{self.success_rate_threshold} @ {self.num_timesteps} timesteps -- "
+                  f"advancing to stage 1 (full adjacent+opposite targets, original success gate)")
         return True
 
 
@@ -280,8 +387,11 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
     early_ckpt_cb = EarlyCheckpointCallback(save_path=os.path.join(MODEL_DIR, "checkpoints"))
     diag_cb = DiagnosticPrintCallback(eval_every_steps=DIAG_PRINT_EVERY_STEPS,
                                        rollout_log_interval_episodes=ROLLOUT_LOG_INTERVAL_EPISODES)
+    # Note: clip_env intentionally excluded -- it's a single deterministic-eval
+    # env used only for video capture, not for anything success_rate-gated.
+    curriculum_cb = CurriculumCallback(envs_to_update=[train_env, eval_env])
 
-    callbacks = [eval_cb, ckpt_cb, clip_cb, early_ckpt_cb, diag_cb]
+    callbacks = [eval_cb, ckpt_cb, clip_cb, early_ckpt_cb, diag_cb, curriculum_cb]
     if use_wandb:
         callbacks.append(WandbCallback(verbose=2))
 
@@ -308,7 +418,7 @@ if __name__ == "__main__":
     parser.add_argument("--timesteps", type=int, default=2_000_000,
                          help="SAC reuses samples via replay, so this is a starting point, "
                               "not a floor -- watch eval reward, not this constant.")
-    parser.add_argument("--device", type=str, default="auto", help="'cpu', 'cuda', or 'auto'")
+    parser.add_argument("--device", type=str, default="cuda", help="'cpu', 'cuda', or 'auto'")
     parser.add_argument("--project", type=str, default="amazedex-cube-rotate")
     args = parser.parse_args()
     main(resume_path=args.resume, n_envs=args.n_envs, total_timesteps=args.timesteps,

@@ -9,7 +9,7 @@ import numpy as np
 from stable_baselines3 import SAC
 
 from amazedex_cube_env import (
-    AmazeDexCubeEnv, FACE_NORMALS, FACE_NAMES, JOINTS, TIP_SITES, ACTUATORS,
+    AmazeDexCubeEnv, FACE_NORMALS, JOINTS, TIP_SITES, ACTUATORS,
     MODEL_PATH, JVEL_SCALE, ANGVEL_SCALE, REACH_NORM, CFG, CUBE_LOCAL_CENTER,
     MAX_CTRL_RATE_FRAC,
 )
@@ -21,6 +21,25 @@ SERVO_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
 GOAL_SPEED = None  
 CALIBRATION_PATH = "hand_calibration.json"
+
+# Physical-digit -> internal target_face (FACE_NORMALS index) map.
+#
+# The digit printed/AprilTag'd on each face of the real cube does NOT match
+# FACE_NORMALS' array index for that face -- e.g. FACE_NORMALS[0] is +Z, but
+# per scene.xml the tag glued to +Z is "tag_number_5", not "tag_number_0".
+# Feeding a typed digit straight in as target_face (the old behavior here)
+# silently commanded the hand to the wrong face -- this is the "asked for 0,
+# hand went to the face showing 5" bug.
+#
+# Derived directly from scene.xml's cube body: each tag_number_<digit> geom's
+# position relative to CUBE_LOCAL_CENTER, projected onto the dominant axis,
+# gives the face normal, matched against FACE_NORMALS:
+#   digit 5 -> +Z (FACE_NORMALS[0])   digit 0 -> -Z (FACE_NORMALS[1])
+#   digit 4 -> +Y (FACE_NORMALS[2])   digit 2 -> -Y (FACE_NORMALS[3])
+#   digit 1 -> +X (FACE_NORMALS[4])   digit 3 -> -X (FACE_NORMALS[5])
+# Re-derive this if the cube mesh/tag placement in scene.xml ever changes.
+DIGIT_TO_FACE_INDEX = {5: 0, 0: 1, 4: 2, 2: 3, 1: 4, 3: 5}
+FACE_INDEX_TO_DIGIT = {v: k for k, v in DIGIT_TO_FACE_INDEX.items()}
 
 
 class HandKinematics:
@@ -135,6 +154,20 @@ class HandInterface:
             self.controller.write_torque_enable(servo_id, 0)
 
 
+def desired_rot_axis(R_cube: np.ndarray, target_face: int) -> np.ndarray | None:
+    """Identical logic to AmazeDexCubeEnv._desired_rot_axis(), computed from
+    R_cube instead of self.data.xmat -- same inputs (cube rotation + target
+    face), same math, so axis_obs matches exactly what training saw."""
+    n = R_cube @ FACE_NORMALS[target_face]
+    axis = np.cross(n, np.array([0.0, 0.0, 1.0]))
+    norm = np.linalg.norm(axis)
+    if norm < 1e-6:
+        if np.dot(n, np.array([0.0, 0.0, 1.0])) < 0:
+            return np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        return None
+    return (axis / norm).astype(np.float32)
+
+
 def build_cube_obs(jpos_raw, jvel_raw, last_action, target_face, kin: HandKinematics,
                     R_cube=np.eye(3), cube_angvel_raw=None) -> np.ndarray:
     """Same normalization amazedex_cube_env.AmazeDexCubeEnv._get_obs() applies
@@ -152,10 +185,15 @@ def build_cube_obs(jpos_raw, jvel_raw, last_action, target_face, kin: HandKinema
     one_hot[target_face] = 1.0
 
     tip_to_cube_n = np.clip(kin.tip_to_cube(jpos_raw) / REACH_NORM, -3.0, 3.0).flatten()
-    cube_pos_rel = np.zeros(3, dtype=np.float32)  # no translation sensor on the rig
+    # cube_pos_rel removed -- there is no translation sensor on the rig, so it
+    # was always fed as zeros here while the env trained on true drift. Now
+    # matches the 55-dim observation_space in amazedex_cube_env.py exactly.
+
+    axis = desired_rot_axis(R_cube, target_face)
+    axis_obs = axis if axis is not None else np.zeros(3, dtype=np.float32)
 
     return np.concatenate([jpos, jvel, last_action, cube_quat, cube_angvel,
-                            target_world_normal, one_hot, tip_to_cube_n, cube_pos_rel]).astype(np.float32)
+                            target_world_normal, one_hot, tip_to_cube_n, axis_obs]).astype(np.float32)
 
 
 def _rotmat_to_quat_wxyz(R: np.ndarray) -> np.ndarray:
@@ -193,7 +231,7 @@ def execute_target_on_real_hand(model, hand: HandInterface, tracker, target_face
                                  kin: HandKinematics, cap: cv2.VideoCapture, cfg=CFG) -> bool:
     """Runs until the cube settles on target_face (success) or cfg.max_steps
     is hit (terminate, report failure). Returns True on success."""
-    print(f"\n--- Target: {FACE_NAMES[target_face]} ---")
+    print(f"\n--- Target: face {FACE_INDEX_TO_DIGIT[target_face]} ---")
 
     mapper = ActionMapper(kin, cfg)
     joint_pos = hand.read_joint_positions()
@@ -231,7 +269,7 @@ def execute_target_on_real_hand(model, hand: HandInterface, tracker, target_face
         hold = hold + 1 if settled else 0
 
         if frame is not None:
-            cv2.putText(frame, f"Target: {FACE_NAMES[target_face]}  theta={np.degrees(theta):.1f}deg  hold={hold}",
+            cv2.putText(frame, f"Target: {FACE_INDEX_TO_DIGIT[target_face]}  theta={np.degrees(theta):.1f}deg  hold={hold}",
                         (10, 40), cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
             cv2.imshow("AmazeDex Cube Execution", frame)
             if cv2.waitKey(1) & 0xFF == ord("q"):
@@ -239,45 +277,54 @@ def execute_target_on_real_hand(model, hand: HandInterface, tracker, target_face
                 return False
 
         if hold >= cfg.success_hold_steps:
-            print(f"--- SUCCESS: {FACE_NAMES[target_face]} reached and held ({step + 1} steps) ---")
+            print(f"--- SUCCESS: face {FACE_INDEX_TO_DIGIT[target_face]} reached and held ({step + 1} steps) ---")
             return True
 
         elapsed = time.perf_counter() - loop_start
         if elapsed < CONTROL_DT:
             time.sleep(CONTROL_DT - elapsed)
 
-    print(f"--- TIMEOUT: target {FACE_NAMES[target_face]} not reached in {cfg.max_steps} steps ---")
+    print(f"--- TIMEOUT: target face {FACE_INDEX_TO_DIGIT[target_face]} not reached in {cfg.max_steps} steps ---")
     return False
 
 
 def execute_target_in_sim(env, model, target_face: int, cfg=CFG) -> bool:
     """Same run-until-success-or-timeout contract as the real-hand version,
-    for apples-to-apples testing of a target-selection loop before deploying."""
+    for apples-to-apples testing of a target-selection loop before deploying.
+    Paced to CONTROL_DT like the real-hand loop -- a MuJoCo step + policy
+    forward pass takes a fraction of a millisecond, so without this the
+    rollout finishes in a tiny fraction of the wall-clock time it represents
+    (looks like a sped-up video, sometimes 40-200x)."""
     obs, _ = env.reset()
     env.unwrapped.targetface = target_face   # setter resets prev_theta/armed/hold
     obs = env.unwrapped._get_obs()
-    print(f"\n--- Target: {FACE_NAMES[target_face]} ---")
+    print(f"\n--- Target: face {FACE_INDEX_TO_DIGIT[target_face]} ---")
 
     for step in range(cfg.max_steps):
+        loop_start = time.perf_counter()
+
         action = predict_action(model, obs)
         obs, reward, done, truncated, info = env.step(action)
         env.render()
         if info.get("success"):
-            print(f"--- SUCCESS: {FACE_NAMES[target_face]} reached and held ({step + 1} steps) ---")
+            print(f"--- SUCCESS: face {FACE_INDEX_TO_DIGIT[target_face]} reached and held ({step + 1} steps) ---")
             return True
         if done or truncated:
             break
-    print(f"--- TIMEOUT/DROPPED: target {FACE_NAMES[target_face]} not reached ---")
+
+        elapsed = time.perf_counter() - loop_start
+        if elapsed < CONTROL_DT:
+            time.sleep(CONTROL_DT - elapsed)
+    print(f"--- TIMEOUT/DROPPED: target face {FACE_INDEX_TO_DIGIT[target_face]} not reached ---")
     return False
 
 
 def prompt_target_face(default: int | None) -> int | None:
-    names = ", ".join(f"{i}={n}" for i, n in enumerate(FACE_NAMES))
-    raw = input(f"Target face [{names}] (blank to quit): ").strip()
+    raw = input("Target face -- digit as printed on the cube [0-5] (blank to quit): ").strip()
     if raw == "":
         return None
     if raw.isdigit() and 0 <= int(raw) <= 5:
-        return int(raw)
+        return DIGIT_TO_FACE_INDEX[int(raw)]  # digit -> internal FACE_NORMALS index
     print("Invalid input, expected 0-5.")
     return default
 
@@ -290,7 +337,10 @@ def main() -> None:
     parser.add_argument("--camera", type=int, default=0)
     parser.add_argument("--calib", default="camera_calib.json", help="AprilTag camera+tag calibration (real mode only)")
     parser.add_argument("--target-face", type=int, default=None, choices=range(6),
-                         help="Skip the prompt for the first attempt only; you're still asked after each attempt.")
+                         help="Digit as printed on the cube (0-5), NOT the internal FACE_NORMALS "
+                              "index -- converted the same way the interactive prompt is. Skips "
+                              "the prompt for the first attempt only; you're still asked after "
+                              "each attempt.")
     args = parser.parse_args()
 
     model = SAC.load(args.model, device="cpu")
@@ -322,7 +372,7 @@ def main() -> None:
     print("\n=== AmazeDex cube rotation ===")
     print("Enter a target face each round. The hand runs until it succeeds or times out, then asks again.")
 
-    target_face = args.target_face
+    target_face = DIGIT_TO_FACE_INDEX[args.target_face] if args.target_face is not None else None
     try:
         while True:
             if target_face is None:
