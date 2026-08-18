@@ -1,0 +1,68 @@
+poses:
+  open:
+    positions: [0, 0, 0, 0, 0, 0, 0, 0]
+  close:
+    positions: [110, 110, 110, 110, 110, 110, 110, 110]
+  ok:
+    positions: [0, 0, 0, 0, 71, 81, 82, 60]
+  greeting:
+    positions: [17, -22, 3, 3, -35, 28, 110, 110]
+  victory:
+    positions: [110, 110, -33, 26, 15, -19, 110, 110]
+  two:
+    positions: [110, 110, 0, 0, 0, 0, 110, 110]
+  paper:
+    positions: [16, -21, 1, 1, -17, 13, 110, 110]
+  stone:
+    positions: [110, 110, 110, 110, 110, 110, 110, 110]
+  scissors:
+    positions: [110, 110, 0, 0, 0, 0, 110, 110]
+  wave1:
+    positions: [-40, 32, -38, 32, -40, 32, 110, 110]
+  wave_r:
+    positions: [32, -40, 32, -40, 32, -40, -40, 32]
+  wave_l:
+    positions: [-40, 32, -40, 32, -40, 32, 32, -40]
+  ring_close:
+    positions: [110, 0, 0, 0, 0, 0, 0, 0]
+  middle_close:
+    positions: [0, 0, 110, 0, 0, 0, 0, 0]
+  pointer_close:
+    positions: [0, 0, 0, 0, 110, 0, 0, 0]
+  thumb_close:
+    positions: [0, 0, 0, 0, 0, 0, 110, 0]
+  one:
+    positions: [110, 110, 110, 110, 0, 0, 110, 110]
+  three:
+    positions: [0, 0, 0, 0, 0, 0, 110, 110]
+  hifive:
+    positions: [0, 0, 0, 0, 0, 0, -40, 32]
+sequences:
+  demo:
+    steps:
+    - open:3,3,3,3,3,3,3,3|2.0s
+    - close:6,6,6,6,6,6,6,6|2.0s
+    - ok:3,3,3,3,3,3,3,3|1.0s
+    - victory:3,3,3,3,3,3,3,3|1.0s
+    - greeting:3,3,3,3,3,3,3,3|1.0s
+  wave:
+    steps:
+    - open:6,6,6,6,6,6,6,6|0.8s
+    - wave_r:5,5,5,5,5,5,5,5|0.6s
+    - wave_l:5,5,5,5,5,5,5,5|0.6s
+    - wave_r:5,5,5,5,5,5,5,5|0.6s
+    - wave_l:5,5,5,5,5,5,5,5|0.6s
+    - wave_r:5,5,5,5,5,5,5,5|0.6s
+    - wave_l:5,5,5,5,5,5,5,5|0.6s
+    - open:5,5,5,5,5,5,5,5|0.8s
+  finger_roll:
+    steps:
+    - open:6,6,6,6,6,6,6,6|0.5s
+    - ring_close:5,5,5,5,5,5,5,5|0.6s
+    - open:5,5,5,5,5,5,5,5|0.5s
+    - middle_close:5,5,5,5,5,5,5,5|0.6s
+    - open:5,5,5,5,5,5,5,5|0.5s
+    - pointer_close:5,5,5,5,5,5,5,5|0.6s
+    - open:5,5,5,5,5,5,5,5|0.5s
+    - thumb_close:5,5,5,5,5,5,5,5|0.6s
+    - open:5,5,5,5,5,5,5,5|0.5s

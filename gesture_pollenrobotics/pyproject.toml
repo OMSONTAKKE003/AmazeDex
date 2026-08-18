@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "amazing-hand-gui"
+version = "0.8.0"
+description = "GUI and CLI tools for controlling the AmazingHand robot via Feetech SCS0009 servos"
+readme = "README.md"
+license = { file = "LICENSE" }
+requires-python = ">=3.10"
+
+dependencies = [
+    "matplotlib>=3.7",
+    "numpy>=1.24",
+    "PyYAML>=6.0",
+    "rustypot",
+]
+
+[project.scripts]
+amazing-hand-gui = "amazing_hand_gui:main"
+amazing-hand-cmd = "amazing_hand_cmd:main"
+
+[project.urls]
+Homepage = "https://github.com/Betatester777/AmazingHandControl"
+"Bug Tracker" = "https://github.com/Betatester777/AmazingHandControl/issues"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"
+markers = [
+    "hardware: tests requiring real servo hardware (run with --hardware)",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["amazing_hand*"]
