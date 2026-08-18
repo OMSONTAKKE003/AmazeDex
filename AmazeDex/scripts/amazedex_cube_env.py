@@ -13,10 +13,7 @@ JOINTS = ["finger1_motor1", "finger1_motor2", "finger2_motor1", "finger2_motor2"
           "finger3_motor1", "finger3_motor2", "finger4_motor1", "finger4_motor2"]
 TIP_SITES = ["tip1", "tip2", "tip3", "tip4"]
 
-MODEL_PATH = os.environ.get(
-    "AMAZEDEX_MODEL_PATH",
-    r"C:\Users\luvja\Desktop\updatedwithstand\AmazeDex\resources\scene.xml",
-)
+MODEL_PATH = os.path.abspath("resources//scene.xml")
 #calculation done using normals as i think they are more reliable 
 FACE_NORMALS = np.array([[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]], dtype=np.float32)
 FACE_NAMES = ["-X", "-Z", "+Y", "-Y", "+X", "+Z"]
