@@ -20,9 +20,6 @@ MODEL_DIR = "models"
 LOG_DIR = "logs"
 CLIP_DIR = "logs/clips"
 
-# All frequencies below are in *environment timesteps* (i.e. what wandb/SB3
-# call num_timesteps), not callback calls -- the // n_envs division below is
-# what converts a timestep target into a callback-call count for a VecEnv.
 EVAL_EVERY_STEPS = 20_000
 VIDEO_EVERY_STEPS = 50_000     
 CKPT_EVERY_STEPS = 20_000     
@@ -49,15 +46,14 @@ ROLLOUT_LOG_INTERVAL_EPISODES = 4
 
 SAC_HPARAMS = dict(
     learning_rate=3e-4,
-    buffer_size=1_000_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
+    buffer_size=1_000_000,
     learning_starts=10_000,      
     batch_size=512,
     tau=0.005,
     gamma=0.9950,
-    # Chunked updates to prevent CPU/GPU context-switching overhead
     train_freq=64,               
-    gradient_steps=64,           
-    ent_coef="auto_0.2",             # was auto_0.1 -- more exploration needed without curriculum bootstrapping
+    gradient_steps=16,           
+    ent_coef="auto_0.2",
     policy_kwargs=dict(net_arch=[512, 512]),
 )
 
@@ -103,10 +99,14 @@ class InferenceClipCallback(BaseCallback):
             if wandb.run is not None:
                 video_array = np.array(frames).transpose(0, 3, 1, 2)
                 wandb.log({"inference_clip": wandb.Video(video_array, fps=self.fps, format="mp4")},
-                           step=self.num_timesteps)
+                          step=self.num_timesteps)
         except Exception as e:
             print(f"[InferenceClipCallback] clip capture failed, skipping this clip: {e}")
         return True
+
+
+EPISODE_MEAN_KEYS = REWARD_KEYS + ("theta_rad", "z_drop_m_actual", "n_tips_touching",
+                                    "reach_dist", "cube_angvel")
 
 
 class DiagnosticPrintCallback(BaseCallback):
@@ -115,26 +115,55 @@ class DiagnosticPrintCallback(BaseCallback):
         super().__init__()
         self.eval_every_steps = eval_every_steps
         self.rollout_log_interval_episodes = rollout_log_interval_episodes
-        self._ep_max_xy = None                    
-        self._completed_max_xy = deque(maxlen=100)  
+        self._ep_sums = None
+        self._ep_steps = None
+        self._ep_max_xy = None
+        self._ep_sum_xy = None
+        self._completed = {key: deque(maxlen=100) for key in EPISODE_MEAN_KEYS}
+        self._completed_xy = deque(maxlen=100)
+        self._completed_max_xy = deque(maxlen=100)
         self._episode_count = 0
         self._last_printed_episode_bucket = -1
+        self.best_success_rate = -1.0
 
-    def _update_running_max_xy(self) -> None:
+    def _ensure_buffers(self, n_envs: int) -> None:
+        if self._ep_sums is None:
+            self._ep_sums = {key: np.zeros(n_envs) for key in EPISODE_MEAN_KEYS}
+            self._ep_steps = np.zeros(n_envs)
+            self._ep_max_xy = np.zeros(n_envs)
+            self._ep_sum_xy = np.zeros(n_envs)
+
+    def _update_running_stats(self) -> None:
         infos = self.locals.get("infos")
         dones = self.locals.get("dones")
         if infos is None:
             return
-        if self._ep_max_xy is None:
-            self._ep_max_xy = np.zeros(len(infos))
+        self._ensure_buffers(len(infos))
         for i, info in enumerate(infos):
+            for key in EPISODE_MEAN_KEYS:
+                val = info.get(key)
+                if val is not None:
+                    self._ep_sums[key][i] += float(val)
             xy = info.get("xy_drift_m")
             if xy is not None:
+                self._ep_sum_xy[i] += xy
                 self._ep_max_xy[i] = max(self._ep_max_xy[i], xy)
+            self._ep_steps[i] += 1
             if dones is not None and dones[i]:
+                steps = max(self._ep_steps[i], 1.0)
+                for key in EPISODE_MEAN_KEYS:
+                    self._completed[key].append(self._ep_sums[key][i] / steps)
+                    self._ep_sums[key][i] = 0.0
+                self._completed_xy.append(self._ep_sum_xy[i] / steps)
                 self._completed_max_xy.append(self._ep_max_xy[i])
+                self._ep_sum_xy[i] = 0.0
                 self._ep_max_xy[i] = 0.0
+                self._ep_steps[i] = 0.0
                 self._episode_count += 1
+
+    def _mean_completed(self, key: str) -> float:
+        vals = self._completed.get(key)
+        return float(safe_mean(vals)) if vals else float("nan")
 
     def _print_and_record(self) -> None:
         buf = self.model.ep_info_buffer
@@ -145,15 +174,22 @@ class DiagnosticPrintCallback(BaseCallback):
             vals = [ep[key] for ep in buf if key in ep]
             return float(safe_mean(vals)) if vals else float("nan")
 
-        mean_theta = mean_of("theta_rad")
-        mean_xy = mean_of("xy_drift_m")
-        mean_z = mean_of("z_drop_m_actual")
+        success_rate = mean_of("episode_success")
         xy_drop_rate = mean_of("dropped_xy")
         z_drop_rate = mean_of("dropped_z")
-        success_rate = mean_of("episode_success")
+
+        mean_theta = self._mean_completed("theta_rad")
+        mean_z = self._mean_completed("z_drop_m_actual")
+        mean_xy = float(safe_mean(self._completed_xy)) if self._completed_xy else float("nan")
         max_xy = float(np.max(self._completed_max_xy)) if self._completed_max_xy else float("nan")
 
-        reward_means = {key: mean_of(key) for key in REWARD_KEYS}
+        reward_means = {key: self._mean_completed(key) for key in REWARD_KEYS}
+
+        if not np.isnan(success_rate) and success_rate > self.best_success_rate:
+            self.best_success_rate = success_rate
+            best_model_path = os.path.join(MODEL_DIR, "bestsuccessrate")
+            self.model.save(best_model_path)
+            print(f">>> New highest success rate: {success_rate:.3f}! Saved checkpoint to {best_model_path}.zip <<<")
 
         print(
             f"[DIAG {self.num_timesteps}] "
@@ -177,7 +213,7 @@ class DiagnosticPrintCallback(BaseCallback):
             self.logger.record(f"reward/{key}", val)
 
     def _on_step(self) -> bool:
-        self._update_running_max_xy()
+        self._update_running_stats()
 
         n_envs = self.training_env.num_envs
         step_freq_calls = max(self.eval_every_steps // n_envs, 1)
@@ -217,16 +253,18 @@ def _init_wandb_safely(project: str, config: dict) -> bool:
     try:
         wandb.init(project=project, config=config, sync_tensorboard=True,
                    monitor_gym=True, resume="allow")
+        print("[wandb] Successfully initialized online logging.")
         return True
     except Exception as e:
-        print(f"[wandb] online init failed ({e}), retrying in offline mode")
+        print(f"[wandb] Online init failed ({e}), attempting offline mode...")
     try:
         os.environ["WANDB_MODE"] = "offline"
         wandb.init(project=project, config=config, sync_tensorboard=True,
                    monitor_gym=True, resume="allow")
+        print("[wandb] Running in OFFLINE mode. Sync later using: `wandb sync wandb/offline-run-*`")
         return True
     except Exception as e:
-        print(f"[wandb] offline init also failed ({e}) -- continuing with wandb fully disabled")
+        print(f"[wandb] Offline init also failed ({e}) -- continuing with wandb fully disabled")
         return False
 
 
@@ -242,9 +280,8 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
     os.makedirs(LOG_DIR, exist_ok=True)
 
     use_wandb = _init_wandb_safely(project, {**SAC_HPARAMS, "n_envs": n_envs,
-                                              "total_timesteps": total_timesteps})
+                                             "total_timesteps": total_timesteps})
 
-    # CHANGED: Replaced DummyVecEnv with SubprocVecEnv to utilize multiprocessing
     train_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=n_envs, vec_env_cls=SubprocVecEnv,
                                          env_kwargs={"randomize": True}),
                             filename=os.path.join(LOG_DIR, "train_monitor.csv"),
@@ -258,7 +295,6 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
         model = SAC.load(resume_path, env=train_env, tensorboard_log=LOG_DIR, device=device)
         print(f"Resumed from: {resume_path}")
     else:
-        # Dictionary dynamically dictates gradient steps in SAC initialization
         model = SAC("MlpPolicy", train_env, device=device, tensorboard_log=LOG_DIR,
                      verbose=1, **SAC_HPARAMS)
 
@@ -269,7 +305,6 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
     ckpt_cb = CheckpointCallback(
         save_freq=max(CKPT_EVERY_STEPS // n_envs, 1),
         save_path=os.path.join(MODEL_DIR, "checkpoints"), name_prefix="sac_cube_ckpt",
-     
         save_replay_buffer=True,
         save_vecnormalize=False, 
     )

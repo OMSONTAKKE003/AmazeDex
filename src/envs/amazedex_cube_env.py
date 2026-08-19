@@ -52,8 +52,8 @@ class Cfg:
     # loose to ever trigger during a real drop. Tightened, but kept well
     # above normal in-hand manipulation drift so a policy actively rotating
     # the cube isn't punished for ordinary shift.
-    z_drop_m: float = 0.09
-    xy_drop_m: float = 0.11
+    z_drop_m: float = 0.18
+    xy_drop_m: float = 0.18
     drop_persist_steps: int = 3
     # Small pose randomization so the policy doesn't overfit to one exact
     # starting grasp/position -- kept modest since large jitter combined
@@ -100,7 +100,7 @@ class Cfg:
     success_bonus: float = 26.0
     min_steps_between_success: int = 2
 
-    drop_penalty: float = 5.1
+    drop_penalty: float = 5.2
     terminate_on_success: bool = False
 
 
@@ -244,13 +244,14 @@ class AmazeDexCubeEnv(MujocoEnv):
         self._hold = 0
 
     def _sample_target_face(self, exclude: int) -> int:
-        # Curriculum removed -- always sample from adjacent faces (~90 deg
-        # rotations). Opposite-face (~180 deg) targets were the hard mode a
-        # curriculum used to ramp into; leaving them out entirely keeps every
-        # episode solvable and lets the policy retry non-stop without ever
-        # facing a harder distribution than it was trained on.
-        candidates = ADJACENT_FACES[exclude]
-        return int(np.random.choice(candidates))
+        adj = ADJACENT_FACES[exclude]          # 4 faces
+        opp = OPPOSITE_FACE[exclude]           # 1 face
+    
+    # 80% chance of adjacent, 20% chance of opposite
+        if np.random.rand() < 0.8:
+            return int(np.random.choice(adj))
+        else:
+            return int(opp)
 
     def reset_model(self):
         c = self.cfg

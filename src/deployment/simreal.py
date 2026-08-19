@@ -331,7 +331,7 @@ def prompt_target_face(default: int | None) -> int | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sim-to-real execution for AmazeDex cube rotation.")
-    parser.add_argument("--model", default="models/best_model")
+    parser.add_argument("--model", default=os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "training", "models", "bestsuccessrate.zip"),)
     parser.add_argument("--mode", choices=["sim", "real"], default="sim")
     parser.add_argument("--port", default="COM14")
     parser.add_argument("--camera", type=int, default=0)
