@@ -52,7 +52,7 @@ SAC_HPARAMS = dict(
     tau=0.005,
     gamma=0.9950,
     train_freq=64,               
-    gradient_steps=16,           
+    gradient_steps=64,           
     ent_coef="auto_0.2",
     policy_kwargs=dict(net_arch=[512, 512]),
 )
