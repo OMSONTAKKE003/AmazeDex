@@ -20,9 +20,9 @@ MODEL_DIR = "models"
 LOG_DIR = "logs"
 CLIP_DIR = "logs/clips"
 
-EVAL_EVERY_STEPS = 20_000
-VIDEO_EVERY_STEPS = 50_000     
-CKPT_EVERY_STEPS = 20_000     
+EVAL_EVERY_STEPS = 100000
+VIDEO_EVERY_STEPS = 100_000     
+CKPT_EVERY_STEPS = 100_000     
 EARLY_SAFETY_CKPT_STEPS = 20_000  
 
 INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
@@ -35,26 +35,44 @@ INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
                   "r_push", "r_commit",  
                   "r_edge_bonus",  
                   "r_reach",  
-                  "r_axis_spin",  
+                  "r_axis_spin",
+                  "r_idle",
                   "r_total")  
 
 REWARD_KEYS = ("r_align", "r_success", "r_drop", "r_action_rate",
-               "r_push", "r_commit", "r_edge_bonus", "r_reach", "r_axis_spin", "r_total")
+               "r_push", "r_commit", "r_edge_bonus", "r_reach", "r_axis_spin", "r_idle", "r_total")
 
 DIAG_PRINT_EVERY_STEPS = 10_000   
 ROLLOUT_LOG_INTERVAL_EPISODES = 4  
 
 SAC_HPARAMS = dict(
     learning_rate=3e-4,
-    buffer_size=1_000_000,
-    learning_starts=10_000,      
-    batch_size=512,
+ 
+    buffer_size=500_000,
+    learning_starts=10_000,
+  
+    batch_size=256,
     tau=0.005,
     gamma=0.9950,
-    train_freq=64,               
-    gradient_steps=64,           
-    ent_coef="auto_0.2",
-    policy_kwargs=dict(net_arch=[512, 512]),
+    train_freq=64,
+    gradient_steps=64,
+    # RESTORED auto entropy tuning. The fixed ent_coef=0.05 ablation was run
+    # for 5M steps and capped at ~16% success with the "one clean push then
+    # freeze" pattern: once the policy finds a near-constant action that
+    # saturates the actuators toward the target, standing still afterward
+    # costs nothing (see k_idle in the env), so there was too little
+    # exploration pressure left to discover the regrasp/finger-gaiting
+    # cycles needed to keep rotating past a single push. Auto-tuning keeps
+    # entropy (and thus exploration of time-varying action sequences) high
+    # while the policy is still far from useful, and lets it relax once
+    # returns actually improve.
+    ent_coef="auto",
+    target_entropy="auto",
+    # Reduced from [512, 512] -- oversized relative to common SAC
+    # manipulation baselines for a 55-dim obs / 8-dim action task. Not
+    # believed to be implicated in the stall itself (that's a control-flow
+    # bug, not a capacity issue), but cheaper/faster for isolation runs.
+    policy_kwargs=dict(net_arch=[512,512]),
 )
 
 
@@ -201,16 +219,31 @@ class DiagnosticPrintCallback(BaseCallback):
             + " ".join(f"{key}={val:.4f}" for key, val in reward_means.items())
         )
 
-        self.logger.record("rollout/success_rate", success_rate)
-        self.logger.record("rollout/drop_rate_xy", xy_drop_rate)
-        self.logger.record("rollout/drop_rate_z", z_drop_rate)
-        self.logger.record("rollout/theta_rad_mean", mean_theta)
-        self.logger.record("rollout/xy_drift_m_mean", mean_xy)
-        self.logger.record("rollout/xy_drift_m_max", max_xy)
-        self.logger.record("rollout/z_drop_m_mean", mean_z)
+        metrics = {
+            "rollout/success_rate": success_rate,
+            "rollout/drop_rate_xy": xy_drop_rate,
+            "rollout/drop_rate_z": z_drop_rate,
+            "rollout/theta_rad_mean": mean_theta,
+            "rollout/xy_drift_m_mean": mean_xy,
+            "rollout/xy_drift_m_max": max_xy,
+            "rollout/z_drop_m_mean": mean_z,
+        }
+        metrics.update({f"reward/{key}": val for key, val in reward_means.items()})
 
-        for key, val in reward_means.items():
-            self.logger.record(f"reward/{key}", val)
+        for name, val in metrics.items():
+            self.logger.record(name, val)
+
+        # Force the logger to flush now instead of waiting on the algorithm's
+        # internal dump schedule -- sbx (JAX SAC) doesn't reliably trigger this
+        # itself, so without it these values never reach the tensorboard writer
+        # and therefore never reach wandb via sync_tensorboard.
+        self.logger.dump(self.num_timesteps)
+
+        # Belt-and-braces: log straight to wandb too, independent of the
+        # tensorboard-sync bridge, so metrics show up even if dump() timing
+        # or sync_tensorboard behavior changes under sbx.
+        if wandb.run is not None:
+            wandb.log(metrics, step=self.num_timesteps)
 
     def _on_step(self) -> bool:
         self._update_running_stats()
@@ -300,7 +333,7 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
 
     eval_cb = EvalCallback(
         eval_env, best_model_save_path=MODEL_DIR, log_path=LOG_DIR,
-        eval_freq=max(EVAL_EVERY_STEPS // n_envs, 1), n_eval_episodes=20, deterministic=True,
+        eval_freq=max(EVAL_EVERY_STEPS // n_envs, 1), n_eval_episodes=60, deterministic=True,
     )
     ckpt_cb = CheckpointCallback(
         save_freq=max(CKPT_EVERY_STEPS // n_envs, 1),
@@ -308,8 +341,12 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
         save_replay_buffer=True,
         save_vecnormalize=False, 
     )
+    clip_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=1, env_kwargs={"render_mode": "rgb_array"}),
+                       info_keywords=INFO_KEYWORDS)
+    clip_fps = clip_env.get_attr("metadata")[0]["render_fps"]
+
     clip_cb = InferenceClipCallback(
-        clip_env, save_freq=max(VIDEO_EVERY_STEPS // n_envs, 1), duration_sec=15.0, fps=30,
+        clip_env, save_freq=max(VIDEO_EVERY_STEPS // n_envs, 1), duration_sec=15.0, fps=clip_fps,
     )
     early_ckpt_cb = EarlyCheckpointCallback(save_path=os.path.join(MODEL_DIR, "checkpoints"))
     diag_cb = DiagnosticPrintCallback(eval_every_steps=DIAG_PRINT_EVERY_STEPS,

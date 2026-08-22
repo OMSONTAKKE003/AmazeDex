@@ -28,26 +28,46 @@ JVEL_SCALE = 5.0
 ANGVEL_SCALE = 10.0
 REACH_NORM = 0.10
 
-HAND_CLOSE_FRAC = 0.50
+HAND_CLOSE_FRAC = 0.55
 HAND_CLOSE_JITTER = 0.005
 CLOSE_PROBE_FRAC = 0.3
 GRASP_OPEN_FRAC = 0.05   
 SETTLE_STEPS = 30   
 
-MAX_CTRL_RATE_FRAC = 0.16
+MAX_CTRL_RATE_FRAC = 0.70
+CUBE_FILLET_R = 0.009
+HALF = 0.0240
 
-HALF = 0.0235
+
+CUBE_CORE_HALF = HALF - CUBE_FILLET_R  # 0.015 -- half-extent of the core box being rounded
+
 _CORNER_SIGNS = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
                           dtype=np.float32)
-LOCAL_CORNERS = _CORNER_SIGNS * HALF
+LOCAL_CORNERS = _CORNER_SIGNS * HALF  # sharp-box wireframe, used only to PARAMETRIZE which
+                                       # corner/edge region a fingertip should aim at -- not
+                                       # used directly as a target point anymore (see below)
 EDGE_PAIRS = np.array([(i, j) for i in range(8) for j in range(i + 1, 8)
                         if np.sum(_CORNER_SIGNS[i] != _CORNER_SIGNS[j]) == 1], dtype=np.int64)
-EDGE_TOL = 0.008
+
+CONTACT_MARGIN = 0.0016
+
+
+def _round_project_local(p_local, core_half=CUBE_CORE_HALF, r=CUBE_FILLET_R):
+
+    q_clamped = np.clip(p_local, -core_half, core_half)
+    diff = p_local - q_clamped
+    dist = np.linalg.norm(diff, axis=-1, keepdims=True)
+    normal = np.divide(diff, dist, out=np.zeros_like(diff), where=dist > 1e-9)
+    surface = q_clamped + r * normal
+    return surface, normal
+
+
+LOCAL_CORNERS_ROUNDED, LOCAL_CORNERS_NORMAL = _round_project_local(LOCAL_CORNERS)
 
 
 @dataclass(frozen=True)
 class Cfg:
-    max_steps: int = 1000
+    max_steps: int = 700
     # Original 18-19cm thresholds were ~4x the cube's own size -- far too
     # loose to ever trigger during a real drop. Tightened, but kept well
     # above normal in-hand manipulation drift so a policy actively rotating
@@ -61,47 +81,67 @@ class Cfg:
     pos_jitter_m: float = 0.0025
     yaw_jitter_rad: float = float(np.radians(3.0))
 
-    grasp_band_frac: float = 0.50
-    action_lpf: float = 0.42
+    grasp_band_frac: float = 0.55
+
+    # filtered_ctrl-anchoring in step() below while doing so.
+    action_lpf: float = 0.75
 
     max_ctrl_rate_frac: float = MAX_CTRL_RATE_FRAC
 
     k_align: float = 3.9
     align_clip_rad: float = 0.30
-    k_action_rate: float = 0.07
+    # Reduced from 0.07 -- under the incremental target_frac fix, sustained
+    # motion now pays a *steady* per-step rate cost (previously only a
+    # single early transient), so the coefficient needed to drop to avoid
+    # recreating a "stop early to avoid the penalty" incentive.
+    k_action_rate: float = 0.01
 
-    # Trimmed from 0.22/0.15 -- these paid out every step just for a
-    # useful push regardless of progress toward finishing, giving the
-    # policy a stable "keep nudging forever" reward stream that can
-    # compete with actually reaching + holding the success gate.
-    k_push: float = 0.15
-    k_commit: float = 0.090
-    push_theta_eps: float = 0.01
+    # NOTE (post-isolation-run update): the target_frac fix alone did NOT
+    # resolve the stall -- 5M-step run capped at ~16% success with the
+    # classic "one clean push, then freeze forever" pattern. Root cause
+    # isn't these shaping terms (they're gated on live d_theta>0 each step,
+    # not a one-off transient, since the rate-limited actuators don't
+    # converge to a fixed point on their own -- a constant *policy* output
+    # is what saturates them). The real gap was exploration: ent_coef was
+    # fixed at a low constant, so SAC had little incentive to keep sampling
+    # varied actions once it found a "push toward target, then output ~0"
+    # policy that collects r_align once and then costs nothing to hold.
+    # Restored auto entropy tuning (see SAC_HPARAMS) and added k_idle below
+    # to make that freeze-in-place policy no longer a free equilibrium.
+    k_push: float = 0.19
+    k_commit: float = 0.012
+    push_theta_eps: float = 0.018
     push_commit_steps: int = 2
 
-    k_axis_spin: float = 0.08
+    k_axis_spin: float = 0.05
     axis_spin_clip: float = 2.0
 
-    k_reach: float = 0.05
-    k_edge_bonus: float = 0.10
+    k_reach: float = 0.025
+    k_edge_bonus: float = 0.015
     reach_target_dist_weight: float = 6.0
 
-    # Single fixed success gate (curriculum removed). Tightened from the
-    # first pass (0.55/1/3.5) -- that was loose enough to reward a fast
-    # "fling through the target zone" pass rather than a controlled stop.
-    # Not tightened all the way to a strict stabilization gate (e.g. 8-step
-    # hold), since with the curriculum gone this is also the *only* success
-    # signal SAC gets early on -- making it too rare to ever stumble into
-    # during early exploration would slow convergence, not speed it up.
-    success_theta_rad: float = 0.45
-    success_hold_steps: int = 3
-    success_max_angvel: float = 2.5
+    # Counter-incentive against the "safe freeze" equilibrium: once the
+    # actuators saturate under a near-constant action, r_align flatlines at
+    # 0 (d_theta=0) and r_action_rate is ~0 at the rate-limit's fixed point,
+    # so sitting still while still misaligned was previously free. This adds
+    # a small constant cost for near-zero cube angular velocity while
+    # theta is still outside the success zone, so idling is never free --
+    # it should be small relative to k_align (3.9) so it nudges rather than
+    # dominates the alignment gradient.
+    k_idle: float = 0.0141
+    idle_angvel_eps: float = 0.05
+
+    success_theta_rad: float = 0.20
+    success_hold_steps: int = 5
+    success_max_angvel: float = 1.0
     success_rearm_theta_rad: float = 0.55
     success_bonus: float = 26.0
-    min_steps_between_success: int = 2
+    min_steps_between_success: int = 1
+    
+    success_min_tips_touching: int = 2
 
-    drop_penalty: float = 5.2
-    terminate_on_success: bool = False
+    drop_penalty: float = 4.5
+    terminate_on_success: bool = True
 
 
 CFG = Cfg()
@@ -164,7 +204,9 @@ class AmazeDexCubeEnv(MujocoEnv):
         super().__init__(model_path, frame_skip=10, render_mode=render_mode)
         self.cfg = cfg
         self.randomize = randomize
-
+        # after super().__init__ in AmazeDexCubeEnv.__init__
+        true_dt = self.model.opt.timestep * self.frame_skip
+        self.metadata["render_fps"] = int(round(1.0 / true_dt))
         self.actids = np.array([self.model.actuator(n).id for n in ACTUATORS])
         self.qposids = np.array([self.model.joint(n).qposadr[0] for n in JOINTS])
         self.qvelids = np.array([self.model.joint(n).dofadr[0] for n in JOINTS])
@@ -376,39 +418,56 @@ class AmazeDexCubeEnv(MujocoEnv):
         if axis is None:
             return np.tile(center, (n_tips, 1)).astype(np.float32), np.zeros(n_tips, dtype=np.float32)
 
-        corners = self._world_corners(center, R)
+        # Work in the cube's LOCAL frame: LOCAL_CORNERS/EDGE_PAIRS are
+        # constants there, and the rounded-surface projection (see
+        # _round_project_local) is only exact in an axis-aligned frame.
+        # world = local @ R.T (matches _world_corners' convention), so
+        # local = world @ R.
+        axis_l = axis @ R
         tip_pos = np.array([self.data.site_xpos[s] for s in self.tip_sites])
+        tip_l = (tip_pos - center) @ R
         w = self.cfg.reach_target_dist_weight
 
-        r_c = corners - center
-        lever_c = np.linalg.norm(np.cross(axis, r_c), axis=1)
-        dist_c = np.linalg.norm(tip_pos[:, None, :] - corners[None, :, :], axis=2)
+        # Lever arm / scoring still uses the SHARP wireframe -- this only
+        # decides *which* corner/edge region is best to push, which is still
+        # governed by where the geometric corners/edges are (max distance
+        # from the rotation axis), independent of how rounded the surface
+        # is there. Only the final target point needs to be on the true
+        # surface -- see the projection below.
+        r_c = LOCAL_CORNERS  # vector from local center to each sharp corner
+        lever_c = np.linalg.norm(np.cross(axis_l, r_c), axis=1)
+        dist_c = np.linalg.norm(tip_l[:, None, :] - LOCAL_CORNERS[None, :, :], axis=2)
         score_c = lever_c[None, :] - w * dist_c
 
-        a = corners[EDGE_PAIRS[:, 0]]
-        b = corners[EDGE_PAIRS[:, 1]]
+        a = LOCAL_CORNERS[EDGE_PAIRS[:, 0]]
+        b = LOCAL_CORNERS[EDGE_PAIRS[:, 1]]
         ab = b - a
         ab_len2 = np.sum(ab * ab, axis=1) + 1e-12
-        diff = tip_pos[:, None, :] - a[None, :, :]
+        diff = tip_l[:, None, :] - a[None, :, :]
         t = np.clip(np.sum(diff * ab[None, :, :], axis=2) / ab_len2[None, :], 0.0, 1.0)
-        cp = a[None, :, :] + t[:, :, None] * ab[None, :, :]
-        r_e = cp - center[None, None, :]
-        lever_e = np.linalg.norm(np.cross(axis, r_e), axis=2)
-        dist_e = np.linalg.norm(tip_pos[:, None, :] - cp, axis=2)
+        cp_l = a[None, :, :] + t[:, :, None] * ab[None, :, :]
+        lever_e = np.linalg.norm(np.cross(axis_l, cp_l), axis=2)
+        dist_e = np.linalg.norm(tip_l[:, None, :] - cp_l, axis=2)
         score_e = lever_e - w * dist_e
 
         all_scores = np.concatenate([score_c, score_e], axis=1)
-        all_points = np.concatenate([np.tile(corners[None, :, :], (n_tips, 1, 1)), cp], axis=1)
+        all_points_l = np.concatenate([np.tile(LOCAL_CORNERS[None, :, :], (n_tips, 1, 1)), cp_l], axis=1)
         all_lever = np.concatenate([np.tile(lever_c[None, :], (n_tips, 1)), lever_e], axis=1)
 
         best_idx = np.argmax(all_scores, axis=1)
         rows = np.arange(n_tips)
-        best_points = all_points[rows, best_idx]
+        best_points_l = all_points_l[rows, best_idx]
         best_lever = all_lever[rows, best_idx]
 
-        vec = best_points - center[None, :]
-        vec_norm = np.linalg.norm(vec, axis=1, keepdims=True) + 1e-9
-        targets = best_points - EDGE_TOL * vec / vec_norm
+        # Project the selected sharp corner/edge point onto the TRUE
+        # rounded surface (exact for these point forms), then back off
+        # along the true local surface normal by a small contact margin.
+        # This replaces the old "shrink toward center by a flat EDGE_TOL"
+        # step, which for a 9mm fillet would have aimed several mm inside
+        # solid geometry.
+        surf_l, normal_l = _round_project_local(best_points_l)
+        targets_l = surf_l - CONTACT_MARGIN * normal_l
+        targets = center[None, :] + targets_l @ R.T
         return targets.astype(np.float32), best_lever.astype(np.float32)
 
     def _reach_shaping(self, axis, touched_mask):
@@ -436,16 +495,21 @@ class AmazeDexCubeEnv(MujocoEnv):
             return None
         return (axis / norm).astype(np.float32)
 
-    def _point_to_cube_edges_dist(self, p, corners):
-        d_corner = float(np.min(np.linalg.norm(corners - p[None, :], axis=1)))
-        a = corners[EDGE_PAIRS[:, 0]]
-        b = corners[EDGE_PAIRS[:, 1]]
-        ab = b - a
-        ab_len2 = np.sum(ab * ab, axis=1) + 1e-12
-        t = np.clip(np.sum((p[None, :] - a) * ab, axis=1) / ab_len2, 0.0, 1.0)
-        cp = a + t[:, None] * ab
-        d_edge = float(np.min(np.linalg.norm(cp - p[None, :], axis=1)))
-        return min(d_corner, d_edge)
+    def _is_near_edge_region(self, world_pt, center, R):
+        """Whether a real (world-frame) contact point is in the rounded
+        edge/corner region of the mesh vs. a flat-face region. Exact test on
+        the rounded-box model: a point is in the core box's "active
+        constraint" set on >=2 axes exactly when it's within CUBE_FILLET_R
+        of the core box on those axes -- i.e. on the rounded edge/corner
+        cap, not the flat face. Unlike a distance-to-sharp-wireframe test,
+        this needs no extra tolerance tied to the fillet radius: real
+        contacts on a flat face never trip it, and real contacts on the
+        actual rounded surface always do, regardless of how large the
+        fillet is.
+        """
+        local_pt = (world_pt - center) @ R
+        near_axes = np.abs(local_pt) >= (CUBE_CORE_HALF - CONTACT_MARGIN)
+        return int(np.sum(near_axes)) >= 2
 
     def _push_alignment(self, axis):
         n_tips = len(self.tip_sites)
@@ -455,7 +519,6 @@ class AmazeDexCubeEnv(MujocoEnv):
             return useful, near_edge
         c_force = 0.015
         center, R = self._cube_frame()
-        corners = self._world_corners(center, R)
         f6 = np.zeros(6)
         for i in range(self.data.ncon):
             con = self.data.contact[i]
@@ -480,7 +543,7 @@ class AmazeDexCubeEnv(MujocoEnv):
                 tau_along = float(np.dot(np.cross(r, f_world), axis))
                 if tau_along > 0:
                     useful[t] = True
-                    if self._point_to_cube_edges_dist(con.pos, corners) < EDGE_TOL:
+                    if self._is_near_edge_region(con.pos, center, R):
                         near_edge[t] = True
         return useful, near_edge
 
@@ -509,6 +572,9 @@ class AmazeDexCubeEnv(MujocoEnv):
         d_theta = float(np.clip(self.prev_theta - theta, -c.align_clip_rad, c.align_clip_rad))
         r_align = c.k_align * d_theta
         self.prev_theta = theta
+
+        angvel = self._cube_angvel()
+        r_idle = -c.k_idle if (theta > c.success_theta_rad and angvel < c.idle_angvel_eps) else 0.0
 
         r_drop = -c.drop_penalty if dropped else 0.0
 
@@ -554,8 +620,8 @@ class AmazeDexCubeEnv(MujocoEnv):
 
         reach = self._reach_dist()
 
-        angvel = self._cube_angvel()
-        settled = theta < c.success_theta_rad and angvel < c.success_max_angvel
+        settled = (theta < c.success_theta_rad and angvel < c.success_max_angvel
+                   and n_touch >= c.success_min_tips_touching and not dropped)
 
         r_success, success = 0.0, False
         steps_since = self.step_count - self._last_success_step
@@ -578,7 +644,7 @@ class AmazeDexCubeEnv(MujocoEnv):
             self._armed = True
 
         total = (r_align + r_success + r_drop + r_action_rate
-                 + r_push + r_commit + r_edge_bonus + r_reach + r_axis_spin)
+                 + r_push + r_commit + r_edge_bonus + r_reach + r_axis_spin + r_idle)
         info = {
             "theta_rad": theta, "success": success, "dropped": dropped,
             "episode_success": self._episode_success,
@@ -590,7 +656,7 @@ class AmazeDexCubeEnv(MujocoEnv):
             "r_action_rate": r_action_rate,
             "r_push": r_push, "r_commit": r_commit,
             "r_edge_bonus": r_edge_bonus, "r_reach": r_reach,
-            "r_axis_spin": r_axis_spin,
+            "r_axis_spin": r_axis_spin, "r_idle": r_idle,
             "r_total": total,
         }
         return total, info
@@ -599,7 +665,17 @@ class AmazeDexCubeEnv(MujocoEnv):
         c = self.cfg
         act = np.clip(action, -1.0, 1.0).astype(np.float32)
 
-        target_frac = np.clip(self.grasp_frac + act * c.grasp_band_frac, -1.0, 1.0)
+        # BUG FIX: was `self.grasp_frac + act * c.grasp_band_frac`, which
+        # anchors target_frac to the fixed pose captured once at reset
+        # (see reset_model, where grasp_frac is set and never reassigned).
+        # For a constant action that made target_frac a fixed point, so
+        # filtered_ctrl geometrically converged and froze within ~5-6 steps
+        # every episode, regardless of what the policy did afterward --
+        # this was the root cause of the "one movement then stop" behavior.
+        # Anchoring to filtered_ctrl instead makes this a genuine velocity
+        # command: a constant action keeps producing step_delta at the rate
+        # limit every step instead of decaying to zero.
+        target_frac = np.clip(self.filtered_ctrl + act * c.grasp_band_frac, -1.0, 1.0)
         lpf_ctrl = c.action_lpf * target_frac + (1 - c.action_lpf) * self.filtered_ctrl
 
         step_delta = np.clip(lpf_ctrl - self.filtered_ctrl, -c.max_ctrl_rate_frac, c.max_ctrl_rate_frac)

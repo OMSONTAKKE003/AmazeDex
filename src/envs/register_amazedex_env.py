@@ -6,14 +6,14 @@ from envs.amazedex_cube_env import AmazeDexCubeEnv
 gym.register(
     id="AmazeDex/CubeRotate-v0",
     entry_point=AmazeDexCubeEnv,
-    max_episode_steps=500, 
+    max_episode_steps=700, 
 )
 
 
 if __name__ == "__main__":
     env = gym.make("AmazeDex/CubeRotate-v0", render_mode="human")
     
-    total_transition_steps = 500  
+    total_transition_steps = 700  
 
     for episode in range(100):
         obs, info = env.reset(seed=episode)
