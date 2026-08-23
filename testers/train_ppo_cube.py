@@ -17,9 +17,7 @@ from stable_baselines3.common.utils import safe_mean
 # CHANGED: Reverted to SubprocVecEnv to run parallel physics on multiple CPU cores
 from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
 
-from amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH, FACE_NAMES
-
-N_FACES = len(FACE_NAMES)
+from amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH
 
 MODEL_DIR = "models"
 LOG_DIR = "logs"
@@ -36,7 +34,6 @@ EARLY_SAFETY_CKPT_STEPS = 20_000
 INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
                   "dropped", "dropped_xy", "dropped_z", "theta_rad",
                   "cube_angvel", "n_tips_touching", "reach_dist", "xy_drift_m", "z_drop_m_actual",
-                  "target_face", "start_face", "achieved_face",
                   "r_align",  
                   "r_success",  
                   "r_drop",  
@@ -55,7 +52,7 @@ ROLLOUT_LOG_INTERVAL_EPISODES = 4
 
 SAC_HPARAMS = dict(
     learning_rate=3e-4,
-    buffer_size=750_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
+    buffer_size=500_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
     learning_starts=10_000,      
     batch_size=512,
     tau=0.005,
@@ -67,7 +64,7 @@ SAC_HPARAMS = dict(
     policy_kwargs=dict(
     net_arch=dict(
         pi=[512, 256],
-        qf=[1024, 512, 256],
+        qf=[1024, 512],
     )
 )
 )
@@ -131,17 +128,6 @@ class DiagnosticPrintCallback(BaseCallback):
         self._episode_count = 0
         self._last_printed_episode_bucket = -1
 
-        # Per-face success tracking. Attempts/successes are resolved off the
-        # raw per-step infos (not the VecMonitor ep_info_buffer), since
-        # target_face changes many times within a single (up to 700-step)
-        # episode and Monitor only records each episode's *final* step info.
-        # An "attempt" for face f starts the moment target_face first becomes
-        # f for a given env, and resolves either as a success (achieved_face
-        # == f fires) or a failure (target_face changes to something else,
-        # or the env auto-resets, without that success firing first).
-        self._current_target = None  # per-env current target face, lazily sized
-        self._face_outcomes = [deque(maxlen=200) for _ in range(N_FACES)]
-
     def _update_running_max_xy(self) -> None:
         infos = self.locals.get("infos")
         dones = self.locals.get("dones")
@@ -157,28 +143,6 @@ class DiagnosticPrintCallback(BaseCallback):
                 self._completed_max_xy.append(self._ep_max_xy[i])
                 self._ep_max_xy[i] = 0.0
                 self._episode_count += 1
-
-    def _update_face_outcomes(self) -> None:
-        infos = self.locals.get("infos")
-        if infos is None:
-            return
-        if self._current_target is None:
-            self._current_target = np.full(len(infos), -1, dtype=int)
-        for i, info in enumerate(infos):
-            tgt = info.get("target_face")
-            achieved = info.get("achieved_face", -1)
-            if tgt is None:
-                continue
-            if achieved is not None and achieved >= 0:
-                self._face_outcomes[achieved].append(1)
-            prev = self._current_target[i]
-            if tgt != prev:
-                # Attempt for `prev` ended. If it ended via a success this
-                # exact step we already logged it above; anything else
-                # (drop, truncation/auto-reset, or a target swap) is a miss.
-                if prev != -1 and achieved != prev:
-                    self._face_outcomes[prev].append(0)
-                self._current_target[i] = tgt
 
     def _print_and_record(self) -> None:
         buf = self.model.ep_info_buffer
@@ -199,11 +163,6 @@ class DiagnosticPrintCallback(BaseCallback):
 
         reward_means = {key: mean_of(key) for key in REWARD_KEYS}
 
-        face_rates = [
-            float(safe_mean(self._face_outcomes[f])) if self._face_outcomes[f] else float("nan")
-            for f in range(N_FACES)
-        ]
-
         print(
             f"[DIAG {self.num_timesteps}] "
             f"mean_theta={mean_theta:.3f} "
@@ -212,11 +171,6 @@ class DiagnosticPrintCallback(BaseCallback):
             f"xy_drop_rate={xy_drop_rate:.3f} z_drop_rate={z_drop_rate:.3f} "
             f"success_rate={success_rate:.3f} "
             + " ".join(f"{key}={val:.4f}" for key, val in reward_means.items())
-        )
-        print(
-            f"[FACE {self.num_timesteps}] "
-            + " ".join(f"face_{f + 1}_{FACE_NAMES[f]}_success_rate={rate:.3f}"
-                        for f, rate in enumerate(face_rates))
         )
 
         # Build one metrics dict so every value lands on the SAME wandb step.
@@ -234,10 +188,6 @@ class DiagnosticPrintCallback(BaseCallback):
             "rollout/z_drop_m_mean": mean_z,
         }
         metrics.update({f"reward/{key}": val for key, val in reward_means.items()})
-        metrics.update({
-            f"faces/face_{f + 1}_{FACE_NAMES[f]}_success_rate": rate
-            for f, rate in enumerate(face_rates)
-        })
 
         for key, val in metrics.items():
             self.logger.record(key, val)
@@ -251,7 +201,6 @@ class DiagnosticPrintCallback(BaseCallback):
 
     def _on_step(self) -> bool:
         self._update_running_max_xy()
-        self._update_face_outcomes()
 
         n_envs = self.training_env.num_envs
         step_freq_calls = max(self.eval_every_steps // n_envs, 1)

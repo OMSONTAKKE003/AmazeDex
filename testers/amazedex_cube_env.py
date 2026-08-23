@@ -16,6 +16,7 @@ TIP_SITES = ["tip1", "tip2", "tip3", "tip4"]
 MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "resources", "scene.xml"))
 FACE_NORMALS = np.array([[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]], dtype=np.float32)
 FACE_NAMES = ["-X", "-Z", "+Y", "-Y", "+X", "+Z"]
+
 ADJACENT_FACES = {f: [g for g in range(6) if g != f and g != (f ^ 1)] for f in range(6)}
 OPPOSITE_FACE = {f: f ^ 1 for f in range(6)}
 
@@ -56,7 +57,7 @@ class Cfg:
     # "drop" and ends the episode -- that's what was freezing the fingers.
     # HALF*sqrt(2) ~= 0.036m is the max center-height swing from tipping the
     # cube onto an edge/corner, so give it headroom above that.
-    z_drop_m: float = 0.045
+    z_drop_m: float = 0.055
     xy_drop_m: float = 0.15
     drop_persist_steps: int = 5
     # Small pose randomization so the policy doesn't overfit to one exact
@@ -78,16 +79,16 @@ class Cfg:
     # useful push regardless of progress toward finishing, giving the
     # policy a stable "keep nudging forever" reward stream that can
     # compete with actually reaching + holding the success gate.
-    k_push: float = 0.22
-    k_commit: float = 0.15
+    k_push: float = 0.28
+    k_commit: float = 0.158
     push_theta_eps: float = 0.01
     push_commit_steps: int = 2
 
     k_axis_spin: float = 0.08
     axis_spin_clip: float = 2.0
 
-    k_reach: float = 0.1
-    k_edge_bonus: float = 0.144
+    k_reach: float = 0.15
+    k_edge_bonus: float = 0.148
     reach_target_dist_weight: float = 6.0
 
     # Single fixed success gate (curriculum removed). Tightened from the
@@ -104,7 +105,7 @@ class Cfg:
     success_bonus: float = 26.0
     min_steps_between_success: int = 2
 
-    drop_penalty: float = 5.5
+    drop_penalty: float = 5.2
     terminate_on_success: bool = False
 
 
@@ -165,11 +166,7 @@ class AmazeDexCubeEnv(MujocoEnv):
     def __init__(self, model_path=MODEL_PATH, render_mode=None, randomize=False, cfg=CFG, **kw):
         if not os.path.exists(model_path):
             raise FileNotFoundError(model_path)
-        # `**kw` (e.g. camera_name="tracking_camera") must be forwarded to
-        # MujocoEnv -- it was previously accepted here and silently dropped,
-        # so callers asking for a specific render camera got the default
-        # free camera instead.
-        super().__init__(model_path, frame_skip=10, render_mode=render_mode, **kw)
+        super().__init__(model_path, frame_skip=10, render_mode=render_mode)
         self.cfg = cfg
         self.randomize = randomize
 
@@ -312,6 +309,7 @@ class AmazeDexCubeEnv(MujocoEnv):
         self._xy_over_steps = 0
         self._z_over_steps = 0
         self._last_success_step = -10_000
+        self.drop_counter = 0
         self._tip_push_streak = np.zeros(N_TIPS, dtype=int)
         self._episode_success = False
         self._episode_success_count = 0
@@ -580,18 +578,12 @@ class AmazeDexCubeEnv(MujocoEnv):
         settled = theta < c.success_theta_rad and angvel < c.success_max_angvel
 
         r_success, success = 0.0, False
-        # Captured BEFORE self.target_face is resampled below -- info used to
-        # report self.target_face directly, which by the time the info dict
-        # was built already pointed at the *next* target, so a success step
-        # always logged the wrong (upcoming) face as the one just achieved.
-        achieved_face = -1
         steps_since = self.step_count - self._last_success_step
         if self._armed and steps_since >= c.min_steps_between_success:
             self._hold = self._hold + 1 if settled else 0
             if self._hold >= c.success_hold_steps:
                 r_success = c.success_bonus
                 success = True
-                achieved_face = self.target_face
                 self._episode_success = True
                 self._episode_success_count += 1
                 self._armed = False
@@ -612,7 +604,6 @@ class AmazeDexCubeEnv(MujocoEnv):
             "episode_success": self._episode_success,
             "episode_success_count": self._episode_success_count,
             "target_face": self.target_face, "start_face": self.start_face,
-            "achieved_face": achieved_face,
             "n_tips_touching": n_touch,
             "reach_dist": reach, "cube_angvel": angvel,
             "r_align": r_align, "r_success": r_success, "r_drop": r_drop,
