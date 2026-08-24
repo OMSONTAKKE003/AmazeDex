@@ -1,6 +1,5 @@
 import argparse
 import os
-import traceback
 from collections import deque
 
 import imageio
@@ -52,7 +51,7 @@ ROLLOUT_LOG_INTERVAL_EPISODES = 4
 
 SAC_HPARAMS = dict(
     learning_rate=3e-4,
-    buffer_size=500_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
+    buffer_size=1_000_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
     learning_starts=10_000,      
     batch_size=512,
     tau=0.005,
@@ -61,12 +60,7 @@ SAC_HPARAMS = dict(
     train_freq=64,               
     gradient_steps=64,           
     ent_coef="auto_0.2",             # was auto_0.1 -- more exploration needed without curriculum bootstrapping
-    policy_kwargs=dict(
-    net_arch=dict(
-        pi=[512, 256],
-        qf=[1024, 512],
-    )
-)
+    policy_kwargs=dict(net_arch=[512, 512]),
 )
 
 
@@ -173,31 +167,16 @@ class DiagnosticPrintCallback(BaseCallback):
             + " ".join(f"{key}={val:.4f}" for key, val in reward_means.items())
         )
 
-        # Build one metrics dict so every value lands on the SAME wandb step.
-        # Keeping the "rollout/" and "reward/" prefixes makes wandb group them
-        # into their own sections automatically -- individual charts per key,
-        # and a "together" view by opening that section / adding them to one
-        # custom panel in the wandb UI (they'll already share an x-axis).
-        metrics = {
-            "rollout/success_rate": success_rate,
-            "rollout/drop_rate_xy": xy_drop_rate,
-            "rollout/drop_rate_z": z_drop_rate,
-            "rollout/theta_rad_mean": mean_theta,
-            "rollout/xy_drift_m_mean": mean_xy,
-            "rollout/xy_drift_m_max": max_xy,
-            "rollout/z_drop_m_mean": mean_z,
-        }
-        metrics.update({f"reward/{key}": val for key, val in reward_means.items()})
+        self.logger.record("rollout/success_rate", success_rate)
+        self.logger.record("rollout/drop_rate_xy", xy_drop_rate)
+        self.logger.record("rollout/drop_rate_z", z_drop_rate)
+        self.logger.record("rollout/theta_rad_mean", mean_theta)
+        self.logger.record("rollout/xy_drift_m_mean", mean_xy)
+        self.logger.record("rollout/xy_drift_m_max", max_xy)
+        self.logger.record("rollout/z_drop_m_mean", mean_z)
 
-        for key, val in metrics.items():
-            self.logger.record(key, val)
-
-        # Explicit wandb.log in addition to the SB3 logger. sync_tensorboard=True
-        # *should* pick these up whenever SB3 dumps the logger, but off-policy
-        # dump cadence isn't tied to this callback, so we also push directly to
-        # guarantee everything actually shows up in wandb every diag interval.
-        if wandb.run is not None:
-            wandb.log(metrics, step=self.num_timesteps)
+        for key, val in reward_means.items():
+            self.logger.record(f"reward/{key}", val)
 
     def _on_step(self) -> bool:
         self._update_running_max_xy()
@@ -233,97 +212,6 @@ class EarlyCheckpointCallback(BaseCallback):
             print(f"[EarlyCheckpointCallback] safety checkpoint saved @ {self.num_timesteps} timesteps "
                   f"({model_path}.zip)")
             self._done = True
-        return True
-
-
-class BestSuccessRateCallback(BaseCallback):
-    """Runs its own deterministic eval loop (independent of EvalCallback, which
-    only tracks reward) so it can select on success rate instead.
-
-    Every `eval_freq` calls it:
-      - runs `n_eval_episodes` deterministic episodes on `eval_env`
-      - logs eval/success_rate, eval/mean_reward, eval/mean_ep_length to wandb
-        (both individually, and together since they share a step)
-      - overwrites a single checkpoint (model + replay buffer) ONLY when the
-        eval success rate beats the best one seen so far
-    """
-
-    def __init__(self, eval_env, eval_freq: int, n_eval_episodes: int = 20,
-                 save_path: str = os.path.join(MODEL_DIR, "best_success_rate"),
-                 success_key: str = "episode_success"):
-        super().__init__()
-        self.eval_env = eval_env
-        self.eval_freq = eval_freq
-        self.n_eval_episodes = n_eval_episodes
-        self.save_path = save_path
-        self.success_key = success_key
-        self.best_success_rate = -np.inf
-        print(f"[BestSuccessRateCallback] initialized: eval_freq={eval_freq} calls, "
-              f"n_eval_episodes={n_eval_episodes}, save_path={save_path}")
-
-    def _run_eval(self):
-        n_envs = self.eval_env.num_envs
-        successes, rewards, lengths = [], [], []
-        ep_rewards = np.zeros(n_envs)
-        ep_lengths = np.zeros(n_envs, dtype=int)
-
-        obs = self.eval_env.reset()
-        while len(successes) < self.n_eval_episodes:
-            action, _ = self.model.predict(obs, deterministic=True)
-            obs, reward, done, infos = self.eval_env.step(action)
-            ep_rewards += reward
-            ep_lengths += 1
-            for i, info in enumerate(infos):
-                if done[i]:
-                    successes.append(float(info.get(self.success_key, 0.0)))
-                    rewards.append(ep_rewards[i])
-                    lengths.append(ep_lengths[i])
-                    ep_rewards[i] = 0.0
-                    ep_lengths[i] = 0
-            if len(successes) >= self.n_eval_episodes:
-                break
-
-        return (float(np.mean(successes)), float(np.mean(rewards)), float(np.mean(lengths)))
-
-    def _on_step(self) -> bool:
-        if self.n_calls % self.eval_freq != 0:
-            return True
-
-        try:
-            success_rate, mean_reward, mean_len = self._run_eval()
-        except Exception as e:
-            print(f"[BestSuccessRateCallback] eval failed, skipping this round: {e}")
-            traceback.print_exc()
-            return True
-
-        print(f"[EVAL {self.num_timesteps}] success_rate={success_rate:.3f} "
-              f"mean_reward={mean_reward:.2f} mean_ep_len={mean_len:.1f} "
-              f"(best so far={self.best_success_rate:.3f})")
-
-        self.logger.record("eval_success/success_rate", success_rate)
-        self.logger.record("eval_success/mean_reward", mean_reward)
-        self.logger.record("eval_success/mean_ep_length", mean_len)
-
-        if wandb.run is not None:
-            wandb.log({
-                "eval_success/success_rate": success_rate,
-                "eval_success/mean_reward": mean_reward,
-                "eval_success/mean_ep_length": mean_len,
-                "eval_success/best_success_rate": max(success_rate, self.best_success_rate),
-            }, step=self.num_timesteps)
-
-        if success_rate > self.best_success_rate:
-            self.best_success_rate = success_rate
-            os.makedirs(self.save_path, exist_ok=True)
-            model_path = os.path.join(self.save_path, "sac_cube_best_success")
-            buffer_path = os.path.join(self.save_path, "sac_cube_best_success_buffer")
-            self.model.save(model_path)               # overwrites in place
-            self.model.save_replay_buffer(buffer_path)  # overwrites in place
-            print(f"[BestSuccessRateCallback] new best success_rate={success_rate:.3f} "
-                  f"-> saved/overwrote {model_path}.zip")
-            if wandb.run is not None:
-                wandb.run.summary["best_success_rate"] = self.best_success_rate
-
         return True
 
 
@@ -365,11 +253,7 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
                             info_keywords=INFO_KEYWORDS)
     eval_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=1), info_keywords=INFO_KEYWORDS)
 
-    # scene.xml defines a dedicated <camera name="tracking_camera" .../>; use it
-    # for inference clips instead of whatever MuJoCo's default free camera is.
-    clip_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=1,
-                                        env_kwargs={"render_mode": "rgb_array",
-                                                     "camera_name": "tracking_camera"}),
+    clip_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=1, env_kwargs={"render_mode": "rgb_array"}),
                            info_keywords=INFO_KEYWORDS)
 
     if resume_path and os.path.exists(resume_path):
@@ -397,12 +281,8 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
     early_ckpt_cb = EarlyCheckpointCallback(save_path=os.path.join(MODEL_DIR, "checkpoints"))
     diag_cb = DiagnosticPrintCallback(eval_every_steps=DIAG_PRINT_EVERY_STEPS,
                                        rollout_log_interval_episodes=ROLLOUT_LOG_INTERVAL_EPISODES)
-    best_success_cb = BestSuccessRateCallback(
-        eval_env, eval_freq=max(EVAL_EVERY_STEPS // n_envs, 1), n_eval_episodes=20,
-        save_path=os.path.join(MODEL_DIR, "best_success_rate"),
-    )
 
-    callbacks = [eval_cb, ckpt_cb, clip_cb, early_ckpt_cb, diag_cb, best_success_cb]
+    callbacks = [eval_cb, ckpt_cb, clip_cb, early_ckpt_cb, diag_cb]
     if use_wandb:
         callbacks.append(WandbCallback(verbose=2))
 
@@ -423,7 +303,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--timesteps", type=int, default=15_000_000,
+    parser.add_argument("--timesteps", type=int, default=2_000_000,
                          help="SAC reuses samples via replay, so this is a starting point, "
                               "not a floor -- watch eval reward, not this constant.")
     parser.add_argument("--device", type=str, default="cuda", help="'cpu', 'cuda', or 'auto'")

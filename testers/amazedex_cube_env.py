@@ -37,29 +37,24 @@ SETTLE_STEPS = 30
 MAX_CTRL_RATE_FRAC = 0.16
 
 HALF = 0.0255
-FILLET_R = 0.0125  # actual corner/edge fillet radius on the physical cube
 _CORNER_SIGNS = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
                           dtype=np.float32)
 LOCAL_CORNERS = _CORNER_SIGNS * HALF
 EDGE_PAIRS = np.array([(i, j) for i in range(8) for j in range(i + 1, 8)
                         if np.sum(_CORNER_SIGNS[i] != _CORNER_SIGNS[j]) == 1], dtype=np.int64)
-# Contacts near a "corner" are really on the rounded fillet, not the sharp
-# geometric corner LOCAL_CORNERS assumes -- so the tolerance for "counts as
-# an edge/corner contact" should equal the real fillet radius, not a guess.
-EDGE_TOL = FILLET_R
+EDGE_TOL = 0.008
 
 
 @dataclass(frozen=True)
 class Cfg:
     max_steps: int = 700
-    # z_drop_m must be bigger than the cube's own half-diagonal, or a plain
-    # 90 deg reorientation (corner briefly lifts, center shifts) reads as a
-    # "drop" and ends the episode -- that's what was freezing the fingers.
-    # HALF*sqrt(2) ~= 0.036m is the max center-height swing from tipping the
-    # cube onto an edge/corner, so give it headroom above that.
-    z_drop_m: float = 0.055
-    xy_drop_m: float = 0.15
-    drop_persist_steps: int = 5
+    # Original 18-19cm thresholds were ~4x the cube's own size -- far too
+    # loose to ever trigger during a real drop. Tightened, but kept well
+    # above normal in-hand manipulation drift so a policy actively rotating
+    # the cube isn't punished for ordinary shift.
+    z_drop_m: float = 0.09
+    xy_drop_m: float = 0.11
+    drop_persist_steps: int = 3
     # Small pose randomization so the policy doesn't overfit to one exact
     # starting grasp/position -- kept modest since large jitter combined
     # with a freshly-simplified reward could destabilize early learning.
@@ -71,7 +66,7 @@ class Cfg:
 
     max_ctrl_rate_frac: float = MAX_CTRL_RATE_FRAC
 
-    k_align: float = 3.2
+    k_align: float = 3.9
     align_clip_rad: float = 0.30
     k_action_rate: float = 0.07
 
@@ -79,16 +74,16 @@ class Cfg:
     # useful push regardless of progress toward finishing, giving the
     # policy a stable "keep nudging forever" reward stream that can
     # compete with actually reaching + holding the success gate.
-    k_push: float = 0.28
-    k_commit: float = 0.158
+    k_push: float = 0.15
+    k_commit: float = 0.090
     push_theta_eps: float = 0.01
     push_commit_steps: int = 2
 
     k_axis_spin: float = 0.08
     axis_spin_clip: float = 2.0
 
-    k_reach: float = 0.15
-    k_edge_bonus: float = 0.148
+    k_reach: float = 0.05
+    k_edge_bonus: float = 0.10
     reach_target_dist_weight: float = 6.0
 
     # Single fixed success gate (curriculum removed). Tightened from the
@@ -105,7 +100,7 @@ class Cfg:
     success_bonus: float = 26.0
     min_steps_between_success: int = 2
 
-    drop_penalty: float = 5.2
+    drop_penalty: float = 5.1
     terminate_on_success: bool = False
 
 
@@ -204,7 +199,6 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.start_face = 0
         self.start_pos = np.zeros(3)
         self.prev_theta = np.pi
-        self._theta_ema = 0.0
         self.prev_reach = 0.0
         self._prev_tip_target_dist = None
         self._armed = True
@@ -225,26 +219,17 @@ class AmazeDexCubeEnv(MujocoEnv):
         return self.data.xpos[self.cubeid] + R @ CUBE_LOCAL_CENTER
 
     def _detect_close_sign(self):
-        # Each finger has 2 joints that close in OPPOSITE directions from
-        # each other (e.g. joint1 clockwise, joint2 anticlockwise), so signs
-        # can't be shared even within one finger. Probe every joint on its
-        # own, one at a time, using its own finger's tip-to-cube distance.
         qpos_save = self.data.qpos.copy()
-        signs = np.ones(N_JOINTS, dtype=np.float32)
-        for i, j in enumerate(self.qposids):
-            tip = self.tip_sites[i // 2]
-            mid, half = self.ctrl_mid[i], self.ctrl_half[i]
-            dists = {}
-            for sign in (1.0, -1.0):
-                self.data.qpos[self.qposids] = self.ctrl_mid
-                self.data.qpos[j] = mid + sign * CLOSE_PROBE_FRAC * half
-                mujoco.mj_forward(self.model, self.data)
-                cpos = self._cube_center_world()
-                dists[sign] = float(np.linalg.norm(self.data.site_xpos[tip] - cpos))
-            signs[i] = 1.0 if dists[1.0] < dists[-1.0] else -1.0
+        dists = {}
+        for sign in (1.0, -1.0):
+            self.data.qpos[self.qposids] = self.ctrl_mid + sign * CLOSE_PROBE_FRAC * self.ctrl_half
+            mujoco.mj_forward(self.model, self.data)
+            cpos = self._cube_center_world()
+            dists[sign] = float(np.mean([np.linalg.norm(self.data.site_xpos[s] - cpos)
+                                          for s in self.tip_sites]))
         self.data.qpos[:] = qpos_save
         mujoco.mj_forward(self.model, self.data)
-        return signs
+        return 1.0 if dists[1.0] < dists[-1.0] else -1.0
 
     @property
     def targetface(self):
@@ -331,7 +316,6 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.last_action[:] = 0.0
 
         self.prev_theta = self._theta()
-        self._theta_ema = 0.0
         self.prev_reach = self._reach_dist()
         self._prev_tip_target_dist = None
         self.start_pos = self._cube_center_world().copy()
@@ -541,12 +525,7 @@ class AmazeDexCubeEnv(MujocoEnv):
         axis = self._desired_rot_axis()
         touched_mask = self._tips_touching_mask()
         useful, near_edge = self._push_alignment(axis)
-        # Rounded edges make the cube wobble as it rolls, so raw single-step
-        # d_theta is noisy and can dip negative even while fingers are doing
-        # the right thing. Gate on a smoothed trend instead of one jittery
-        # step, or "ball juggling" motion gets starved of reward mid-roll.
-        self._theta_ema = 0.3 * d_theta + 0.7 * self._theta_ema
-        outcome_gate = self._theta_ema > c.push_theta_eps
+        outcome_gate = d_theta > c.push_theta_eps
         active_push = useful & outcome_gate
 
         r_push = c.k_push if active_push.any() else 0.0
