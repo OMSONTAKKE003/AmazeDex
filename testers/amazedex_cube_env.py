@@ -36,7 +36,7 @@ SETTLE_STEPS = 30
 
 MAX_CTRL_RATE_FRAC = 0.16
 
-HALF = 0.0255
+HALF = 0.024
 _CORNER_SIGNS = np.array([[sx, sy, sz] for sx in (-1, 1) for sy in (-1, 1) for sz in (-1, 1)],
                           dtype=np.float32)
 LOCAL_CORNERS = _CORNER_SIGNS * HALF
@@ -58,7 +58,7 @@ class Cfg:
     # Small pose randomization so the policy doesn't overfit to one exact
     # starting grasp/position -- kept modest since large jitter combined
     # with a freshly-simplified reward could destabilize early learning.
-    pos_jitter_m: float = 0.0025
+    pos_jitter_m: float = 0.000
     yaw_jitter_rad: float = float(np.radians(3.0))
 
     grasp_band_frac: float = 0.50
@@ -74,7 +74,7 @@ class Cfg:
     # useful push regardless of progress toward finishing, giving the
     # policy a stable "keep nudging forever" reward stream that can
     # compete with actually reaching + holding the success gate.
-    k_push: float = 0.15
+    k_push: float = 0.5
     k_commit: float = 0.090
     push_theta_eps: float = 0.01
     push_commit_steps: int = 2
@@ -82,7 +82,7 @@ class Cfg:
     k_axis_spin: float = 0.08
     axis_spin_clip: float = 2.0
 
-    k_reach: float = 0.05
+    k_reach: float = 0.1
     k_edge_bonus: float = 0.10
     reach_target_dist_weight: float = 6.0
 
@@ -97,11 +97,11 @@ class Cfg:
     success_hold_steps: int = 3
     success_max_angvel: float = 2.5
     success_rearm_theta_rad: float = 0.55
-    success_bonus: float = 26.0
+    success_bonus: float = 16.0
     min_steps_between_success: int = 2
 
-    drop_penalty: float = 5.1
-    terminate_on_success: bool = False
+    drop_penalty: float = 2.0
+    terminate_on_success: bool = True
 
 
 CFG = Cfg()
@@ -211,9 +211,6 @@ class AmazeDexCubeEnv(MujocoEnv):
         self._episode_success_count = 0
         self.close_sign = self._detect_close_sign()
 
-        # Deck for strict quota sampling of start faces
-        self._start_face_deck = []
-
     def _cube_center_world(self):
         R = self.data.xmat[self.cubeid].reshape(3, 3)
         return self.data.xpos[self.cubeid] + R @ CUBE_LOCAL_CENTER
@@ -249,7 +246,7 @@ class AmazeDexCubeEnv(MujocoEnv):
         # curriculum used to ramp into; leaving them out entirely keeps every
         # episode solvable and lets the policy retry non-stop without ever
         # facing a harder distribution than it was trained on.
-        candidates = ADJACENT_FACES[exclude]
+        candidates = [g for g in range(6) if g != exclude]
         return int(np.random.choice(candidates))
 
     def reset_model(self):
@@ -262,12 +259,9 @@ class AmazeDexCubeEnv(MujocoEnv):
 
         base_quat = self.init_qpos[self.cube_qpos + 3:self.cube_qpos + 7].copy()
 
-        # Strict Quota Implementation: cycle through a shuffled deck of faces [0..5]
-        if not self._start_face_deck:
-            self._start_face_deck = list(range(6))
-            np.random.shuffle(self._start_face_deck)
-        
-        start_face = self._start_face_deck.pop()
+        # Start face is drawn uniformly at random each reset (quota/deck
+        # system removed).
+        start_face = 0
         self.start_face = start_face
         self.target_face = self._sample_target_face(start_face)
         up_q = FACE_QUATS[start_face]

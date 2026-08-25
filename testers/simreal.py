@@ -294,10 +294,27 @@ def execute_target_in_sim(env, model, target_face: int, cfg=CFG) -> bool:
     forward pass takes a fraction of a millisecond, so without this the
     rollout finishes in a tiny fraction of the wall-clock time it represents
     (looks like a sped-up video, sometimes 40-200x)."""
-    obs, _ = env.reset()
-    env.unwrapped.targetface = target_face   # setter resets prev_theta/armed/hold
-    obs = env.unwrapped._get_obs()
-    print(f"\n--- Target: face {FACE_INDEX_TO_DIGIT[target_face]} ---")
+    # reset_model() draws the cube's *starting* face from its own shuffled
+    # quota deck, independent of the target we set right after -- about 1/6
+    # of the time that draw happens to already match the requested target,
+    # which would report an instant "success" without the policy doing any
+    # real work. Re-roll (env-internal only, not a training-data change)
+    # until the start pose is non-trivial for this target, so manual testing
+    # is meaningful every time.
+    MAX_RESET_TRIES = 20
+    for attempt in range(MAX_RESET_TRIES):
+        obs, _ = env.reset()
+        env.unwrapped.targetface = target_face   # setter resets prev_theta/armed/hold
+        obs = env.unwrapped._get_obs()
+        if env.unwrapped.prev_theta >= cfg.success_theta_rad:
+            break
+    else:
+        print(f"[WARN] Could not draw a non-trivial start pose in {MAX_RESET_TRIES} resets; "
+              f"proceeding with whatever we have.")
+
+    start_digit = FACE_INDEX_TO_DIGIT.get(env.unwrapped.start_face, "?")
+    print(f"\n--- Target: face {FACE_INDEX_TO_DIGIT[target_face]}  (start face: {start_digit}, "
+          f"theta0={np.degrees(env.unwrapped.prev_theta):.1f}deg) ---")
 
     for step in range(cfg.max_steps):
         loop_start = time.perf_counter()
