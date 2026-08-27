@@ -6,7 +6,7 @@ import imageio
 import numpy as np
 import wandb
 from wandb.integration.sb3 import WandbCallback
-
+import sys 
 # Using sbx for JAX/Flax GPU compilation
 from sbx import SAC
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
@@ -15,8 +15,8 @@ from stable_baselines3.common.utils import safe_mean
 
 # CHANGED: Reverted to SubprocVecEnv to run parallel physics on multiple CPU cores
 from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
-
-from amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from envs.amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH
 
 MODEL_DIR = "models"
 LOG_DIR = "logs"
@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--timesteps", type=int, default=2_000_000,
+    parser.add_argument("--timesteps", type=int, default=5_000_000,
                          help="SAC reuses samples via replay, so this is a starting point, "
                               "not a floor -- watch eval reward, not this constant.")
     parser.add_argument("--device", type=str, default="cuda", help="'cpu', 'cuda', or 'auto'")
