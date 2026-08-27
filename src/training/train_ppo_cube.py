@@ -1,7 +1,7 @@
 import argparse
 import os
 from collections import deque
-import sys
+
 import imageio
 import numpy as np
 import wandb
@@ -12,17 +12,22 @@ from sbx import SAC
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList, CheckpointCallback, EvalCallback
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.utils import safe_mean
+
+# CHANGED: Reverted to SubprocVecEnv to run parallel physics on multiple CPU cores
 from stable_baselines3.common.vec_env import VecMonitor, SubprocVecEnv
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
-from envs.amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH
+
+from amazedex_cube_env import AmazeDexCubeEnv, MODEL_PATH
 
 MODEL_DIR = "models"
 LOG_DIR = "logs"
 CLIP_DIR = "logs/clips"
 
-EVAL_EVERY_STEPS = 100000
-VIDEO_EVERY_STEPS = 100_000     
-CKPT_EVERY_STEPS = 100_000     
+# All frequencies below are in *environment timesteps* (i.e. what wandb/SB3
+# call num_timesteps), not callback calls -- the // n_envs division below is
+# what converts a timestep target into a callback-call count for a VecEnv.
+EVAL_EVERY_STEPS = 20_000
+VIDEO_EVERY_STEPS = 50_000     
+CKPT_EVERY_STEPS = 20_000     
 EARLY_SAFETY_CKPT_STEPS = 20_000  
 
 INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
@@ -35,44 +40,27 @@ INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
                   "r_push", "r_commit",  
                   "r_edge_bonus",  
                   "r_reach",  
-                  "r_axis_spin",
-                  "r_idle",
+                  "r_axis_spin",  
                   "r_total")  
 
 REWARD_KEYS = ("r_align", "r_success", "r_drop", "r_action_rate",
-               "r_push", "r_commit", "r_edge_bonus", "r_reach", "r_axis_spin", "r_idle", "r_total")
+               "r_push", "r_commit", "r_edge_bonus", "r_reach", "r_axis_spin", "r_total")
 
 DIAG_PRINT_EVERY_STEPS = 10_000   
 ROLLOUT_LOG_INTERVAL_EPISODES = 4  
 
 SAC_HPARAMS = dict(
     learning_rate=3e-4,
- 
-    buffer_size=500_000,
-    learning_starts=10_000,
-  
-    batch_size=256,
+    buffer_size=1_000_000,        # was 500_000 -- more diverse experience now that curriculum-driven diversity is gone
+    learning_starts=10_000,      
+    batch_size=512,
     tau=0.005,
     gamma=0.9950,
-    train_freq=64,
-    gradient_steps=64,
-    # RESTORED auto entropy tuning. The fixed ent_coef=0.05 ablation was run
-    # for 5M steps and capped at ~16% success with the "one clean push then
-    # freeze" pattern: once the policy finds a near-constant action that
-    # saturates the actuators toward the target, standing still afterward
-    # costs nothing (see k_idle in the env), so there was too little
-    # exploration pressure left to discover the regrasp/finger-gaiting
-    # cycles needed to keep rotating past a single push. Auto-tuning keeps
-    # entropy (and thus exploration of time-varying action sequences) high
-    # while the policy is still far from useful, and lets it relax once
-    # returns actually improve.
-    ent_coef="auto",
-    target_entropy="auto",
-    # Reduced from [512, 512] -- oversized relative to common SAC
-    # manipulation baselines for a 55-dim obs / 8-dim action task. Not
-    # believed to be implicated in the stall itself (that's a control-flow
-    # bug, not a capacity issue), but cheaper/faster for isolation runs.
-    policy_kwargs=dict(net_arch=[512,512]),
+    # Chunked updates to prevent CPU/GPU context-switching overhead
+    train_freq=64,               
+    gradient_steps=64,           
+    ent_coef="auto_0.2",             # was auto_0.1 -- more exploration needed without curriculum bootstrapping
+    policy_kwargs=dict(net_arch=[512, 512]),
 )
 
 
@@ -117,14 +105,10 @@ class InferenceClipCallback(BaseCallback):
             if wandb.run is not None:
                 video_array = np.array(frames).transpose(0, 3, 1, 2)
                 wandb.log({"inference_clip": wandb.Video(video_array, fps=self.fps, format="mp4")},
-                          step=self.num_timesteps)
+                           step=self.num_timesteps)
         except Exception as e:
             print(f"[InferenceClipCallback] clip capture failed, skipping this clip: {e}")
         return True
-
-
-EPISODE_MEAN_KEYS = REWARD_KEYS + ("theta_rad", "z_drop_m_actual", "n_tips_touching",
-                                    "reach_dist", "cube_angvel")
 
 
 class DiagnosticPrintCallback(BaseCallback):
@@ -133,55 +117,26 @@ class DiagnosticPrintCallback(BaseCallback):
         super().__init__()
         self.eval_every_steps = eval_every_steps
         self.rollout_log_interval_episodes = rollout_log_interval_episodes
-        self._ep_sums = None
-        self._ep_steps = None
-        self._ep_max_xy = None
-        self._ep_sum_xy = None
-        self._completed = {key: deque(maxlen=100) for key in EPISODE_MEAN_KEYS}
-        self._completed_xy = deque(maxlen=100)
-        self._completed_max_xy = deque(maxlen=100)
+        self._ep_max_xy = None                    
+        self._completed_max_xy = deque(maxlen=100)  
         self._episode_count = 0
         self._last_printed_episode_bucket = -1
-        self.best_success_rate = -1.0
 
-    def _ensure_buffers(self, n_envs: int) -> None:
-        if self._ep_sums is None:
-            self._ep_sums = {key: np.zeros(n_envs) for key in EPISODE_MEAN_KEYS}
-            self._ep_steps = np.zeros(n_envs)
-            self._ep_max_xy = np.zeros(n_envs)
-            self._ep_sum_xy = np.zeros(n_envs)
-
-    def _update_running_stats(self) -> None:
+    def _update_running_max_xy(self) -> None:
         infos = self.locals.get("infos")
         dones = self.locals.get("dones")
         if infos is None:
             return
-        self._ensure_buffers(len(infos))
+        if self._ep_max_xy is None:
+            self._ep_max_xy = np.zeros(len(infos))
         for i, info in enumerate(infos):
-            for key in EPISODE_MEAN_KEYS:
-                val = info.get(key)
-                if val is not None:
-                    self._ep_sums[key][i] += float(val)
             xy = info.get("xy_drift_m")
             if xy is not None:
-                self._ep_sum_xy[i] += xy
                 self._ep_max_xy[i] = max(self._ep_max_xy[i], xy)
-            self._ep_steps[i] += 1
             if dones is not None and dones[i]:
-                steps = max(self._ep_steps[i], 1.0)
-                for key in EPISODE_MEAN_KEYS:
-                    self._completed[key].append(self._ep_sums[key][i] / steps)
-                    self._ep_sums[key][i] = 0.0
-                self._completed_xy.append(self._ep_sum_xy[i] / steps)
                 self._completed_max_xy.append(self._ep_max_xy[i])
-                self._ep_sum_xy[i] = 0.0
                 self._ep_max_xy[i] = 0.0
-                self._ep_steps[i] = 0.0
                 self._episode_count += 1
-
-    def _mean_completed(self, key: str) -> float:
-        vals = self._completed.get(key)
-        return float(safe_mean(vals)) if vals else float("nan")
 
     def _print_and_record(self) -> None:
         buf = self.model.ep_info_buffer
@@ -192,22 +147,15 @@ class DiagnosticPrintCallback(BaseCallback):
             vals = [ep[key] for ep in buf if key in ep]
             return float(safe_mean(vals)) if vals else float("nan")
 
-        success_rate = mean_of("episode_success")
+        mean_theta = mean_of("theta_rad")
+        mean_xy = mean_of("xy_drift_m")
+        mean_z = mean_of("z_drop_m_actual")
         xy_drop_rate = mean_of("dropped_xy")
         z_drop_rate = mean_of("dropped_z")
-
-        mean_theta = self._mean_completed("theta_rad")
-        mean_z = self._mean_completed("z_drop_m_actual")
-        mean_xy = float(safe_mean(self._completed_xy)) if self._completed_xy else float("nan")
+        success_rate = mean_of("episode_success")
         max_xy = float(np.max(self._completed_max_xy)) if self._completed_max_xy else float("nan")
 
-        reward_means = {key: self._mean_completed(key) for key in REWARD_KEYS}
-
-        if not np.isnan(success_rate) and success_rate > self.best_success_rate:
-            self.best_success_rate = success_rate
-            best_model_path = os.path.join(MODEL_DIR, "bestsuccessrate")
-            self.model.save(best_model_path)
-            print(f">>> New highest success rate: {success_rate:.3f}! Saved checkpoint to {best_model_path}.zip <<<")
+        reward_means = {key: mean_of(key) for key in REWARD_KEYS}
 
         print(
             f"[DIAG {self.num_timesteps}] "
@@ -219,34 +167,19 @@ class DiagnosticPrintCallback(BaseCallback):
             + " ".join(f"{key}={val:.4f}" for key, val in reward_means.items())
         )
 
-        metrics = {
-            "rollout/success_rate": success_rate,
-            "rollout/drop_rate_xy": xy_drop_rate,
-            "rollout/drop_rate_z": z_drop_rate,
-            "rollout/theta_rad_mean": mean_theta,
-            "rollout/xy_drift_m_mean": mean_xy,
-            "rollout/xy_drift_m_max": max_xy,
-            "rollout/z_drop_m_mean": mean_z,
-        }
-        metrics.update({f"reward/{key}": val for key, val in reward_means.items()})
+        self.logger.record("rollout/success_rate", success_rate)
+        self.logger.record("rollout/drop_rate_xy", xy_drop_rate)
+        self.logger.record("rollout/drop_rate_z", z_drop_rate)
+        self.logger.record("rollout/theta_rad_mean", mean_theta)
+        self.logger.record("rollout/xy_drift_m_mean", mean_xy)
+        self.logger.record("rollout/xy_drift_m_max", max_xy)
+        self.logger.record("rollout/z_drop_m_mean", mean_z)
 
-        for name, val in metrics.items():
-            self.logger.record(name, val)
-
-        # Force the logger to flush now instead of waiting on the algorithm's
-        # internal dump schedule -- sbx (JAX SAC) doesn't reliably trigger this
-        # itself, so without it these values never reach the tensorboard writer
-        # and therefore never reach wandb via sync_tensorboard.
-        self.logger.dump(self.num_timesteps)
-
-        # Belt-and-braces: log straight to wandb too, independent of the
-        # tensorboard-sync bridge, so metrics show up even if dump() timing
-        # or sync_tensorboard behavior changes under sbx.
-        if wandb.run is not None:
-            wandb.log(metrics, step=self.num_timesteps)
+        for key, val in reward_means.items():
+            self.logger.record(f"reward/{key}", val)
 
     def _on_step(self) -> bool:
-        self._update_running_stats()
+        self._update_running_max_xy()
 
         n_envs = self.training_env.num_envs
         step_freq_calls = max(self.eval_every_steps // n_envs, 1)
@@ -286,18 +219,16 @@ def _init_wandb_safely(project: str, config: dict) -> bool:
     try:
         wandb.init(project=project, config=config, sync_tensorboard=True,
                    monitor_gym=True, resume="allow")
-        print("[wandb] Successfully initialized online logging.")
         return True
     except Exception as e:
-        print(f"[wandb] Online init failed ({e}), attempting offline mode...")
+        print(f"[wandb] online init failed ({e}), retrying in offline mode")
     try:
         os.environ["WANDB_MODE"] = "offline"
         wandb.init(project=project, config=config, sync_tensorboard=True,
                    monitor_gym=True, resume="allow")
-        print("[wandb] Running in OFFLINE mode. Sync later using: `wandb sync wandb/offline-run-*`")
         return True
     except Exception as e:
-        print(f"[wandb] Offline init also failed ({e}) -- continuing with wandb fully disabled")
+        print(f"[wandb] offline init also failed ({e}) -- continuing with wandb fully disabled")
         return False
 
 
@@ -313,8 +244,9 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
     os.makedirs(LOG_DIR, exist_ok=True)
 
     use_wandb = _init_wandb_safely(project, {**SAC_HPARAMS, "n_envs": n_envs,
-                                             "total_timesteps": total_timesteps})
+                                              "total_timesteps": total_timesteps})
 
+    # CHANGED: Replaced DummyVecEnv with SubprocVecEnv to utilize multiprocessing
     train_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=n_envs, vec_env_cls=SubprocVecEnv,
                                          env_kwargs={"randomize": True}),
                             filename=os.path.join(LOG_DIR, "train_monitor.csv"),
@@ -328,25 +260,23 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
         model = SAC.load(resume_path, env=train_env, tensorboard_log=LOG_DIR, device=device)
         print(f"Resumed from: {resume_path}")
     else:
+        # Dictionary dynamically dictates gradient steps in SAC initialization
         model = SAC("MlpPolicy", train_env, device=device, tensorboard_log=LOG_DIR,
                      verbose=1, **SAC_HPARAMS)
 
     eval_cb = EvalCallback(
         eval_env, best_model_save_path=MODEL_DIR, log_path=LOG_DIR,
-        eval_freq=max(EVAL_EVERY_STEPS // n_envs, 1), n_eval_episodes=60, deterministic=True,
+        eval_freq=max(EVAL_EVERY_STEPS // n_envs, 1), n_eval_episodes=20, deterministic=True,
     )
     ckpt_cb = CheckpointCallback(
         save_freq=max(CKPT_EVERY_STEPS // n_envs, 1),
         save_path=os.path.join(MODEL_DIR, "checkpoints"), name_prefix="sac_cube_ckpt",
+     
         save_replay_buffer=True,
         save_vecnormalize=False, 
     )
-    clip_env = VecMonitor(make_vec_env(AmazeDexCubeEnv, n_envs=1, env_kwargs={"render_mode": "rgb_array"}),
-                       info_keywords=INFO_KEYWORDS)
-    clip_fps = clip_env.get_attr("metadata")[0]["render_fps"]
-
     clip_cb = InferenceClipCallback(
-        clip_env, save_freq=max(VIDEO_EVERY_STEPS // n_envs, 1), duration_sec=15.0, fps=clip_fps,
+        clip_env, save_freq=max(VIDEO_EVERY_STEPS // n_envs, 1), duration_sec=15.0, fps=30,
     )
     early_ckpt_cb = EarlyCheckpointCallback(save_path=os.path.join(MODEL_DIR, "checkpoints"))
     diag_cb = DiagnosticPrintCallback(eval_every_steps=DIAG_PRINT_EVERY_STEPS,

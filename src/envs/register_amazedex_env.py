@@ -1,7 +1,7 @@
 import gymnasium as gym
 import numpy as np
 
-from envs.amazedex_cube_env import AmazeDexCubeEnv
+from amazedex_cube_env import AmazeDexCubeEnv
 
 gym.register(
     id="AmazeDex/CubeRotate-v0",
