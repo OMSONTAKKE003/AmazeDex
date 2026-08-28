@@ -13,7 +13,7 @@ JOINTS = ["finger1_motor1", "finger1_motor2", "finger2_motor1", "finger2_motor2"
           "finger3_motor1", "finger3_motor2", "finger4_motor1", "finger4_motor2"]
 TIP_SITES = ["tip1", "tip2", "tip3", "tip4"]
 
-MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "resources", "scene.xml"))
+MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..", "resources", "scene.xml"))
 FACE_NORMALS = np.array([[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]], dtype=np.float32)
 FACE_NAMES = ["-X", "-Z", "+Y", "-Y", "+X", "+Z"]
 
@@ -53,7 +53,7 @@ class Cfg:
     # above normal in-hand manipulation drift so a policy actively rotating
     # the cube isn't punished for ordinary shift.
     z_drop_m: float = 0.09
-    xy_drop_m: float = 0.10
+    xy_drop_m: float = 0.11
     drop_persist_steps: int = 3
     # Small pose randomization so the policy doesn't overfit to one exact
     # starting grasp/position -- kept modest since large jitter combined

@@ -16,6 +16,7 @@ from envs.amazedex_cube_env import (
 import envs.register_amazedex_env
 import mujoco
 
+
 CONTROL_DT = 0.02
 SERVO_IDS = [1, 2, 3, 4, 5, 6, 7, 8]
 
@@ -348,7 +349,7 @@ def prompt_target_face(default: int | None) -> int | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sim-to-real execution for AmazeDex cube rotation.")
-    parser.add_argument("--model", default="training/models/best_model")
+    parser.add_argument("--model", default="models/best_model")
     parser.add_argument("--mode", choices=["sim", "real"], default="sim")
     parser.add_argument("--port", default="COM14")
     parser.add_argument("--camera", type=int, default=0)

@@ -303,7 +303,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", type=str, default=None)
     parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--timesteps", type=int, default=5_000_000,
+    parser.add_argument("--timesteps", type=int, default=2_000_000,
                          help="SAC reuses samples via replay, so this is a starting point, "
                               "not a floor -- watch eval reward, not this constant.")
     parser.add_argument("--device", type=str, default="cuda", help="'cpu', 'cuda', or 'auto'")
