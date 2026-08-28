@@ -6,13 +6,14 @@ import time
 import cv2
 import numpy as np
 from sbx import SAC
-
-from amazedex_cube_env import (
+import sys 
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
+from envs.amazedex_cube_env import (
     AmazeDexCubeEnv, FACE_NORMALS, JOINTS, TIP_SITES, ACTUATORS,
     MODEL_PATH, JVEL_SCALE, ANGVEL_SCALE, REACH_NORM, CFG, CUBE_LOCAL_CENTER,
     MAX_CTRL_RATE_FRAC,
 )
-import register_amazedex_env
+import envs.register_amazedex_env
 import mujoco
 
 CONTROL_DT = 0.02
@@ -347,7 +348,7 @@ def prompt_target_face(default: int | None) -> int | None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Sim-to-real execution for AmazeDex cube rotation.")
-    parser.add_argument("--model", default="models/best_model")
+    parser.add_argument("--model", default="training/models/best_model")
     parser.add_argument("--mode", choices=["sim", "real"], default="sim")
     parser.add_argument("--port", default="COM14")
     parser.add_argument("--camera", type=int, default=0)
