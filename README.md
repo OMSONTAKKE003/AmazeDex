@@ -1,4 +1,4 @@
-#  AmazeDex
+# AmazeDex
 
 Training a multi-fingered robotic hand to autonomously rotate a cube to any target orientation using deep reinforcement learning, on the **Amazing Hand** by [Pollen Robotics](https://github.com/pollen-robotics/AmazingHand/) (4 fingers, 8 DOF).
 
@@ -10,20 +10,7 @@ Trained fully in **MuJoCo** simulation, deployed to real hardware using AprilTag
 
 ---
 
-##  Repository Map
-
-```
-AmazeDex/
-│
-├── basics/                          # RL fundamentals — toy environments
-├── mjcf/                            # MuJoCo assets
-├── rockpaperscissors/               # Sim2real mini-task
-├── src/                              # Core dextrous manipulation pipeline
-```
-
----
-
-##  Overview
+## Overview
 
 The robot receives information about the object's current orientation and target orientation and learns finger movements that gradually align the object with the target pose. The training is performed entirely in a simulated environment, where the agent learns through trial and error by maximizing rewards based on orientation accuracy and grasp stability.
 
@@ -31,111 +18,114 @@ This project is a union of mechanical design, computer vision, and reinforcement
 
 ---
 
-##  Simulation
+## Repository Map
 
-The Amazing Hand is a four-fingered hand with 8 degrees of freedom (DOF). It was simulated and trained in **MuJoCo**, chosen for being lightweight, easy to work with, and good at representing real-world physical parameters.
+```text
+AmazeDex/
+├── assets/                         # Media assets (images and GIFs) for documentation
+├── RLPractice/                     # RL fundamentals and toy environments
+├── mjcf/                           # MuJoCo physical model assets & scene definitions
+├── rockpaperscissors/              # Sim2real gesture recognition mini-task
+└── src/                            # Core dexterous manipulation pipeline
+---
 
-Two XML files define the simulation:
-- **`robot.xml`** — the hand's structure: joints, actuators, control ranges, forces, colors, and physical properties
-- **`scene.xml`** — the environment: ground, camera, lighting, and the manipulation cube
+## Task Objective
 
-STL files for the hand were sourced from Onshape and Pollen Robotics' GitHub, then converted to MuJoCo XML using the open-source [`onshape-to-robot`](https://github.com/rhoban/onshape-to-robot) tool. Since no open-source stand existed to hold the hand fixed in position, a custom mechanical stand was designed and 3D printed.
-
-<p align="center">
-  <img src="assets/images/hand_sim.png" alt="MuJoCo simulation render" width="450"/>
-</p>
+To train the 4-fingered Amazing Hand autonomously to rotate a cube to any desired target orientation using deep reinforcement learning, transitioning seamless control policies from simulation to physical hardware.
 
 ---
 
-##  Hardware
+## Simulation & Hardware
 
-The physical hand is a replica of the original Amazing Hand by Pollen Robotics.
+### Simulation
+The Amazing Hand is a four-fingered hand with 8 degrees of freedom (DOF). It was simulated and trained in **MuJoCo**, chosen for being lightweight, easy to work with, and good at representing real-world physical parameters.
 
-- **Material:** All 3D-printed parts in PLA filament
-- **Fasteners:** M2 screws (4–26 mm), M2 hex nuts, 16 mm / 8 mm dowel pins per finger
+Two XML files define the simulation:
+- **`robot.xml`**: Defines joint kinematics, motor actuators, control limits, applied forces, and physical inertia.
+- **`scene.xml`**: Environment configuration including ground surface plane, lighting, cameras, and target cube dynamics.
 
-- **Stand:** Printed in two sections (base + hand-holder), joined with M3 screws
+STL models were sourced from Onshape / Pollen Robotics and converted to MuJoCo XML using [`onshape-to-robot`](https://github.com/rhoban/onshape-to-robot). Since no open-source stand existed, a custom mechanical mounting stand was modeled and 3D printed.
+
+<p align="center">
+  <img src="assets/gif/sim.gif" alt="MuJoCo simulation render" width="450"/>
+</p>
+
+### Hardware
+- **Material:** All 3D-printed components fabricated in PLA filament.
+- **Fasteners:** M2 screws (4–26 mm length), M2 hex nuts, 16 mm / 8 mm dowel pins per finger joint.
+- **Stand:** Printed in two sections (base + hand-holder) joined via M3 fasteners.
 
 <p align="center">
   <img src="assets/images/hand.png" alt="Assembled hand" width="450"/>
 </p>
 
-**Challenges encountered:**
-
-| Issue | Details |
-|---|---|
-| Finger gimbal snapping | Broke repeatedly despite trying different print settings and filaments |
-| Servo adapter failures | Suspected cause: inductive back-EMF surge — when a servo suddenly stops or jams, energy stored in its motor windings discharges as a voltage spike back into the adapter's power rail |
-| Slower real-world motion | Servo speeds were intentionally limited to protect the hardware, making real movement slower than in simulation |
 
 
 
-##  Forms of Dextrous Manipulation
+## Usage & Installation
 
-Two manipulation strategies were tried:
+### Prerequisites
 
-1. **Lift and rotate** — lift the cube off the palm, then rotate it about its spawn axis.
-   ❌ The hand grasped the cube but often stayed idle instead of rotating it (a form of reward hacking), and struggled to lift the cube off the palm.
+This project utilizes [`uv`](https://github.com/astral-sh/uv) for fast, deterministic Python environment management. Install `uv` using one of the commands below:
 
-2. **Rotate to target face** — rotate the cube in place toward a user-specified target face.
-   ✅ This gave much better results and became the main approach for the rest of the project.
+- **Linux / macOS:**
+  ```bash
+  curl -LsSf [https://astral.sh/uv/install.sh](https://astral.sh/uv/install.sh) | sh
+  ```
+- **Windows:**
+  ```powershell
+  powershell -c "irm [https://astral.sh/uv/install.ps1](https://astral.sh/uv/install.ps1) | iex"
+  ```
+- **Via pip:**
+  ```bash
+  pip install uv
+  ```
 
+---
 
+### Execution Steps
 
-##  Usage
- 
-**1. Install dependencies** (this repo uses [`uv`](https://github.com/astral-sh/uv) for dependency management):
- 
-```bash
-git clone https://github.com/OMSONTAKKE003/AmazeDex
-cd AmazeDex
-uv sync
-```
- 
-**2. Train the cube-rotation policy in simulation:**
- 
-```bash
-uv run src/training/train_ppo_cube.py
-```
- 
-> The environment is registered via `src/envs/register_amazedex_env.py`; swap in your own RL algorithm/config here to reproduce the PPO / DDPG+HER / SAC comparisons described below.
- 
-**3. Deploy a trained policy to the real hand:**
- 
-```bash
-uv run src/deployment/simreal.py
-```
- 
-This uses AprilTag-based pose estimation (`src/perception/aruco_pose.py`) to read the cube's real-world orientation and feed it to the policy.
- 
-**4. (Optional) Try the rock-paper-scissors sim2real mini-task:**
- 
-```bash
-uv run rockpaperscissors/train_ppo_rps.py   # train in sim
-uv run rockpaperscissors/sim2real_rps.py    # deploy with webcam gesture input
-```
- 
-**5. (Optional) Explore the RL fundamentals scripts:**
- 
-```bash
-uv run RLPractice/FrozenLake.py
-```
- 
-> Exact script arguments (checkpoint paths, number of episodes, etc.) are defined in each file — check the top of each script for configurable options.
- 
----  
+1. **Clone the repository and install dependencies:**
+   ```bash
+   git clone [https://github.com/OMSONTAKKE003/AmazeDex](https://github.com/OMSONTAKKE003/AmazeDex)
+   cd AmazeDex
+   uv sync
+   ```
 
+2. **Train the cube-rotation policy in simulation:**
+   ```bash
+   uv run src/training/train_ppo_cube.py
+   ```
+   *(Environment is registered via `src/envs/register_amazedex_env.py`)*
 
+3. **Deploy trained policy to real hardware:**
+   ```bash
+   uv run src/deployment/simreal.py
+   ```
+   *(Uses AprilTag pose estimation from `src/perception/aruco_pose.py` to read object pose)*
 
-##  Contributors
+4. **Run Rock-Paper-Scissors sim2real task:**
+   ```bash
+   uv run rockpaperscissors/train_ppo_rps.py   # Train in simulation
+   uv run rockpaperscissors/sim2real_rps.py    # Deploy on hardware with vision input
+   ```
+
+5. **Run RL baseline practice scripts:**
+   ```bash
+   uv run RLPractice/FrozenLake.py
+   ```
+
+---
+
+## Contributors
 
 - [**Luv Bharat Jain**](https://github.com/luvjain22307-hue)
 - [**Om Sontakke**](https://github.com/OMSONTAKKE003)
 
 ---
 
-##  Acknowledgements
+## Acknowledgements
 
-Built under the **Society of Robotics and Automation, VJTI**, with guidance from mentors **Arhan Chavre** and **Sahil Apage**.
+Built under the **Society of Robotics and Automation (SRA), VJTI**, with guidance from mentors **Arhan Chavare** and **Sahil Apage**.
 
-Hand design based on the open-source **Amazing Hand** by [Pollen Robotics](https://www.pollen-robotics.com/).
+Hand hardware design based on the open-source **Amazing Hand** by [Pollen Robotics](https://www.pollen-robotics.com/).
