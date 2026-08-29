@@ -1,0 +1,80 @@
+# =========================
+# Project-Specific & Subfolders
+# =========================
+**/logs/
+**/models/
+**/wandb/
+**/testers/
+**/gesture_pollenrobotics/
+
+# =========================
+# ML Outputs, Logs, & Checkpoints
+# =========================
+# Ignore training log outputs specifically instead of all .csv files
+**/logs/*.csv
+*.log
+
+**/checkpoints/
+**/chkpts/
+**/ckpt/
+*.pt
+*.pth
+*.h5
+*.safetensors
+*.ckpt
+
+# =========================
+# Video Clips & Media
+# =========================
+**/clips/
+# Ignore video files everywhere...
+*.mp4
+*.avi
+*.mov
+*.mkv
+# ...EXCEPT your documentation demos for the README
+!docs/videos/*.mp4
+!docs/*.mp4
+
+# =========================
+# Environments & Packages
+# =========================
+.venv/
+venv/
+env/
+# Note: uv.lock is intentionally NOT ignored so dependencies remain reproducible.
+
+# =========================
+# Python Caches & Build Files
+# =========================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+build/
+dist/
+*.egg-info/
+
+# =========================
+# Secrets & Config
+# =========================
+.env
+.env.local
+.env.*
+
+# =========================
+# Jupyter Notebooks
+# =========================
+.ipynb_checkpoints/
+
+# =========================
+# IDEs & OS Files
+# =========================
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+src/training/logs/
+src/training/logs/train_monitor.csv
+*.csv
