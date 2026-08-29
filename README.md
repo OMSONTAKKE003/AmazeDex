@@ -15,43 +15,12 @@ Trained fully in **MuJoCo** simulation, deployed to real hardware using AprilTag
 ```
 AmazeDex/
 │
-├── RLPractice/                     # RL fundamentals — toy environments
-│   ├── FrozenLake.py
-│   ├── TemporalDifference.py
-│   ├── acrobot.py
-│   ├── mountaincar.py
-│   └── pendulumcontinuous.py
-│
-├── resources/                      # MuJoCo assets
-│   ├── assets/                     # STL files
-│   ├── robot.xml                   # Hand structure, joints, actuators
-│   ├── scene.xml                   # Full scene — hand + cube + stand
-│   ├── rock.xml                    # Hand + stand only
-│   ├── joints_properties.xml
-│   └── tag36h11_XX.png             # AprilTags for cube faces
-│
+├── basics/                     # RL fundamentals — toy environments
+├── mjcf/                      # MuJoCo assets
+│  
 ├── rockpaperscissors/               # Sim2real mini-task
-│   ├── amazedex_rps_env.py
-│   ├── mediapipe_rps_gesture.py
-│   ├── mujoco_env.py
-│   ├── sim2real_rps.py
-│   └── train_ppo_rps.py
-│
+│  
 ├── src/                              # Core dextrous manipulation pipeline
-│   ├── deployment/
-│   │   └── simreal.py               # Real-hardware deployment
-│   ├── envs/
-│   │   ├── amazedex_cube_env.py
-│   │   ├── mujoco_env.py
-│   │   └── register_amazedex_env.py
-│   ├── perception/
-│   │   └── aruco_pose.py            # AprilTag / pose estimation
-│   └── training/
-│       └── train_ppo_cube.py
-│
-├── testers/                          # Test scripts
-├── pyproject.toml
-└── uv.lock
 ```
 
 ---
@@ -90,7 +59,7 @@ The physical hand is a replica of the original Amazing Hand by Pollen Robotics.
 - **Stand:** Printed in two sections (base + hand-holder), joined with M3 screws
 
 <p align="center">
-  <img src="docs/images/hand_assembly.jpeg" alt="Assembled hand" width="450"/>
+  <img src="assets/images/hand.png" alt="Assembled hand" width="450"/>
 </p>
 
 **Challenges encountered:**
@@ -101,19 +70,7 @@ The physical hand is a replica of the original Amazing Hand by Pollen Robotics.
 | Servo adapter failures | Suspected cause: inductive back-EMF surge — when a servo suddenly stops or jams, energy stored in its motor windings discharges as a voltage spike back into the adapter's power rail |
 | Slower real-world motion | Servo speeds were intentionally limited to protect the hardware, making real movement slower than in simulation |
 
----
 
-## 📷 Sim2Real Pose Estimation
-
-In simulation, the cube's orientation comes directly from MuJoCo's ground truth — this isn't available in the real world, so a way to estimate the cube's 6D pose from a camera was needed.
-
-Options considered: NVIDIA **DOPE**, **MegaPose6D**, and classical **OpenCV + PnP solver**. All of these were expected to struggle with occlusion and inconsistent lighting, so **AprilTags** fixed to each cube face were used instead for a simpler, more robust solution.
-
-<p align="center">
-  <img src="docs/images/hand_pose_detection.png" alt="AprilTag pose estimation setup" width="450"/>
-</p>
-
----
 
 ## 🎯 Forms of Dextrous Manipulation
 
@@ -125,38 +82,7 @@ Two manipulation strategies were tried:
 2. **Rotate to target face** — rotate the cube in place toward a user-specified target face.
    ✅ This gave much better results and became the main approach for the rest of the project.
 
----
 
-## 🏋️ Training
-
-Four reinforcement learning algorithms were tried, in this order:
-
-1. **PPO (Proximal Policy Optimization)** — a common, stable starting point for continuous-control tasks. It worked for basic manipulation, but was slow to train and prone to reward hacking.
-2. **PPO + Curriculum Learning** — gradually increased task difficulty. The hand learned to grasp the cube, but this exposed the reward hacking issue more clearly (grasping without rotating), so this approach was dropped.
-3. **DDPG + HER (Hindsight Experience Replay)** — HER lets the agent learn from failed attempts by relabeling them with the goal actually achieved. This helped with sparse rewards, but the combination still struggled with the complexity of dexterous contact dynamics.
-4. **SAC (Soft Actor-Critic)** — the best performer. SAC is off-policy, reuses past experience through a replay buffer, and uses entropy-driven exploration to try out different finger-coordination strategies instead of settling too early on one behavior.
-
-**Algorithm comparison:**
-
-| Algorithm | Success Rate (Convergence) | Main Issue |
-|---|---|---|
-| PPO | 0% | No success observed |
-| PPO + Curriculum | Low (2–6%) | Grasp-and-idle (reward hacking) |
-| DDPG + HER | 0% | Becomes idle after some steps |
-| **SAC** | **~80%** | — |
-
-**Key tuning changes that drove the biggest improvement:**
-1. Reduced cube size to 48 mm, added a 4 mm edge fillet, reduced mass, and adjusted the initial spawn position
-2. Increased push reward: `0.15 → 0.50`
-3. Increased reach reward: `0.05 → 0.10`
-4. Reweighted the success bonus (`26 → 16`) and drop penalty (`5.1 → 2.0`)
-5. Fixed the start face instead of randomizing both start and target faces, cutting the number of combinations the model had to learn from 36 down to a manageable set
-
-<p align="center">
-  <img src="docs/images/success_rate_graph.png" alt="Training results graph" width="500"/>
-</p>
-
----
 
 ## 🚀 Usage
  
