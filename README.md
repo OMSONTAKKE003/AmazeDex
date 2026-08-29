@@ -124,4 +124,4 @@ This project utilizes [`uv`](https://github.com/astral-sh/uv) for fast, determin
 Built under the **Society of Robotics and Automation (SRA), VJTI**, with guidance from mentors **Arhan Chavare** and **Sahil Apage**.
 
 Hand hardware design based on the open-source **Amazing Hand** by [Pollen Robotics](https://www.pollen-robotics.com/).
->>>>>>> basere-change
+
