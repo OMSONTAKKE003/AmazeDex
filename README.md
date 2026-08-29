@@ -82,7 +82,7 @@ This project utilizes [`uv`](https://github.com/astral-sh/uv) for fast, determin
 
 1. **Clone the repository and install dependencies:**
    ```bash
-   git clone [https://github.com/OMSONTAKKE003/AmazeDex](https://github.com/OMSONTAKKE003/AmazeDex)
+   git clone https://github.com/OMSONTAKKE003/AmazeDex.git
    cd AmazeDex
    uv sync
    ```
