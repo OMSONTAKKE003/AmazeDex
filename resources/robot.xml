@@ -52,7 +52,7 @@
   </default>
 
   <worldbody>
-    <body name="r_wrist_interface" pos="0 0 0" quat="1 0 -1 0" childclass="my-robot">
+    <body name="r_wrist_interface" pos="0.094 -0.036 -0.027" quat="1 0 -1 0" childclass="my-robot">
       <inertial pos="-0.0129275 -0.0010481 0.0570037" mass="0.160126" fullinertia="0.000178145 0.000104513 0.000125587 -1.4624e-05 2.97375e-05 9.50115e-06"/>
       <geom type="mesh" class="visual" pos="-0.00800001 0.03055 0.070198" quat="0.5 0.5 0.5 0.5" mesh="sts3032" material="sts3032_material"/>
       <geom type="mesh" class="visual" pos="-0.0115 0.0245 0.1022" quat="0.5 0.5 -0.5 -0.5" mesh="finger_frame" material="finger_frame_material"/>
