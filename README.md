@@ -1,4 +1,4 @@
-# 🤖 AmazeDex
+#  AmazeDex
 
 Training a multi-fingered robotic hand to autonomously rotate a cube to any target orientation using deep reinforcement learning, on the **Amazing Hand** by [Pollen Robotics](https://github.com/pollen-robotics/AmazingHand/) (4 fingers, 8 DOF).
 
@@ -10,7 +10,7 @@ Trained fully in **MuJoCo** simulation, deployed to real hardware using AprilTag
 
 ---
 
-## 📂 Repository Map
+##  Repository Map
 
 ```
 AmazeDex/
@@ -23,7 +23,7 @@ AmazeDex/
 
 ---
 
-## 🧠 Overview
+##  Overview
 
 The robot receives information about the object's current orientation and target orientation and learns finger movements that gradually align the object with the target pose. The training is performed entirely in a simulated environment, where the agent learns through trial and error by maximizing rewards based on orientation accuracy and grasp stability.
 
@@ -31,7 +31,7 @@ This project is a union of mechanical design, computer vision, and reinforcement
 
 ---
 
-## 🖥️ Simulation
+##  Simulation
 
 The Amazing Hand is a four-fingered hand with 8 degrees of freedom (DOF). It was simulated and trained in **MuJoCo**, chosen for being lightweight, easy to work with, and good at representing real-world physical parameters.
 
@@ -47,7 +47,7 @@ STL files for the hand were sourced from Onshape and Pollen Robotics' GitHub, th
 
 ---
 
-## 🔧 Hardware
+##  Hardware
 
 The physical hand is a replica of the original Amazing Hand by Pollen Robotics.
 
@@ -70,7 +70,7 @@ The physical hand is a replica of the original Amazing Hand by Pollen Robotics.
 
 
 
-## 🎯 Forms of Dextrous Manipulation
+##  Forms of Dextrous Manipulation
 
 Two manipulation strategies were tried:
 
@@ -82,12 +82,12 @@ Two manipulation strategies were tried:
 
 
 
-## 🚀 Usage
+##  Usage
  
 **1. Install dependencies** (this repo uses [`uv`](https://github.com/astral-sh/uv) for dependency management):
  
 ```bash
-git clone https://github.com/<your-org>/AmazeDex.git
+git clone https://github.com/OMSONTAKKE003/AmazeDex
 cd AmazeDex
 uv sync
 ```
@@ -127,14 +127,14 @@ uv run RLPractice/FrozenLake.py
 
 
 
-## 👥 Contributors
+##  Contributors
 
 - [**Luv Bharat Jain**](https://github.com/luvjain22307-hue)
 - [**Om Sontakke**](https://github.com/OMSONTAKKE003)
 
 ---
 
-## 🙏 Acknowledgements
+##  Acknowledgements
 
 Built under the **Society of Robotics and Automation, VJTI**, with guidance from mentors **Arhan Chavre** and **Sahil Apage**.
 
