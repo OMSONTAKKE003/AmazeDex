@@ -27,6 +27,7 @@ AmazeDex/
 ├── mjcf/                           # MuJoCo physical model assets & scene definitions
 ├── rockpaperscissors/              # Sim2real gesture recognition mini-task
 └── src/                            # Core dexterous manipulation pipeline
+```
 ---
 
 ## Task Objective
