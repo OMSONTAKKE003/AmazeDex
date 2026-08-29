@@ -3,7 +3,7 @@
 Training a multi-fingered robotic hand to autonomously rotate a cube to any target orientation using deep reinforcement learning, on the **Amazing Hand** by [Pollen Robotics](https://github.com/pollen-robotics/AmazingHand/) (4 fingers, 8 DOF).
 
 <p align="center">
-  <img src="docs/images/hand_stand.jpeg" alt="AmazeDex hand" width="550"/>
+  <img src="assets/images/hand_stand.jpeg" alt="AmazeDex hand" width="550"/>
 </p>
 
 Trained fully in **MuJoCo** simulation, deployed to real hardware using AprilTag-based pose estimation. Best result: **~80% success rate** with SAC.
@@ -44,7 +44,7 @@ Two XML files define the simulation:
 STL files for the hand were sourced from Onshape and Pollen Robotics' GitHub, then converted to MuJoCo XML using the open-source [`onshape-to-robot`](https://github.com/rhoban/onshape-to-robot) tool. Since no open-source stand existed to hold the hand fixed in position, a custom mechanical stand was designed and 3D printed.
 
 <p align="center">
-  <img src="docs/images/hand_sim.png" alt="MuJoCo simulation render" width="450"/>
+  <img src="assets/images/hand_sim.png" alt="MuJoCo simulation render" width="450"/>
 </p>
 
 ---
