@@ -1,4 +1,5 @@
 import os
+from collections import deque
 from dataclasses import dataclass
 import mujoco
 import numpy as np
@@ -13,7 +14,10 @@ JOINTS = ["finger1_motor1", "finger1_motor2", "finger2_motor1", "finger2_motor2"
           "finger3_motor1", "finger3_motor2", "finger4_motor1", "finger4_motor2"]
 TIP_SITES = ["tip1", "tip2", "tip3", "tip4"]
 
-MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..", "resources", "scene.xml"))
+# if the name isn't found in the model, randomization silently no-ops.
+TRACKING_CAMERA_NAME = "tracking_camera"
+
+MODEL_PATH = os.path.abspath(os.path.join(os.path.dirname(__file__), "..","..", "mjcf", "scene.xml"))
 FACE_NORMALS = np.array([[0, 0, 1], [0, 0, -1], [0, 1, 0], [0, -1, 0], [1, 0, 0], [-1, 0, 0]], dtype=np.float32)
 FACE_NAMES = ["-X", "-Z", "+Y", "-Y", "+X", "+Z"]
 
@@ -61,6 +65,26 @@ class Cfg:
     pos_jitter_m: float = 0.000
     yaw_jitter_rad: float = float(np.radians(3.0))
 
+    # Camera domain randomization -- intentionally separate from the ctor
+    # `randomize` flag (which only drives geom friction) so the tracking
+    # camera's pose can be jittered independently while friction/pose
+    # randomization stay off. 2cm / 5deg is a mild jitter meant to make a
+    # vision policy robust to small camera-mount error, not to simulate a
+    # camera that's wildly out of place -- tighten/loosen based on how
+    # precisely your real camera rig is actually mounted.
+    randomize_camera: bool = True
+    cam_pos_jitter_m: float = 0.04
+    cam_angle_jitter_rad: float = float(np.radians(8.0))
+    # Camera pipeline latency -- an integer number of env steps (inclusive
+    # range, resampled fresh each reset) by which the cube-pose-derived
+    # parts of the observation (cubequat, cube_angvel, target_normal,
+    # tip_to_cube, axis_obs) lag behind the true simulated state. Models a
+    # real vision pipeline's capture+inference delay. Proprioceptive obs
+    # (joint pos/vel, last action) are NOT delayed since those come from
+    # encoders, not the camera. Gated by randomize_camera, same as the
+    # pos/angle jitter above.
+    cam_latency_steps: tuple = (0, 3)
+
     grasp_band_frac: float = 0.50
     action_lpf: float = 0.42
 
@@ -102,6 +126,16 @@ class Cfg:
 
     drop_penalty: float = 2.0
     terminate_on_success: bool = True
+
+    # Cube-only friction/mass domain randomization -- gated by ctor
+    # `randomize` flag. Friction is randomized per-axis (sliding,
+    # torsional, rolling) around whatever the cube geom(s) specify in
+    # scene.xml (e.g. "1.2 0.005 0.0001"). Mass is randomized around the
+    # nominal cube body_mass (e.g. 0.041g), with body_inertia scaled by
+    # the same factor so the inertia tensor stays consistent with a
+    # uniform-density assumption.
+    friction_range: tuple = (0.7, 1.3)
+    mass_range: tuple = (0.7, 1.3)
 
 
 CFG = Cfg()
@@ -158,7 +192,7 @@ FACE_QUATS = np.array([_q_from_vecs(FACE_NORMALS[f], np.array([0.0, 0.0, 1.0]))
 class AmazeDexCubeEnv(MujocoEnv):
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 15}
 
-    def __init__(self, model_path=MODEL_PATH, render_mode=None, randomize=False, cfg=CFG, **kw):
+    def __init__(self, model_path=MODEL_PATH, render_mode=None, randomize=True, cfg=CFG, **kw):
         if not os.path.exists(model_path):
             raise FileNotFoundError(model_path)
         super().__init__(model_path, frame_skip=10, render_mode=render_mode)
@@ -179,6 +213,30 @@ class AmazeDexCubeEnv(MujocoEnv):
                            for b in tip_bodies]
         self.cube_geoms = {g for g in range(self.model.ngeom) if self.model.geom_bodyid[g] == self.cubeid}
         self.base_friction = self.model.geom_friction.copy()
+
+        # Cube-only randomization targets (friction per axis, mass +
+        # inertia) -- captured once here as the "nominal" values that
+        # reset_model() jitters around each episode when self.randomize
+        # is True.
+        self.cube_geom_ids = np.array(sorted(self.cube_geoms), dtype=np.int64)
+        self.base_cube_friction = self.model.geom_friction[self.cube_geom_ids].copy()
+        self.base_cube_mass = float(self.model.body_mass[self.cubeid])
+        self.base_cube_inertia = self.model.body_inertia[self.cubeid].copy()
+
+        # Tracking camera pose randomization -- nominal pose cached once
+        # from scene.xml, jittered fresh around that nominal pose each
+        # reset (see _randomize_camera) rather than drifting cumulatively.
+        try:
+            self.tracking_cam_id = self.model.camera(TRACKING_CAMERA_NAME).id
+            self.base_cam_pos = self.model.cam_pos[self.tracking_cam_id].copy()
+            self.base_cam_quat = self.model.cam_quat[self.tracking_cam_id].copy()
+        except KeyError:
+            # Name not found in the model -- randomization becomes a no-op
+            # instead of crashing. Fix TRACKING_CAMERA_NAME above if your
+            # scene.xml uses a different name for this camera.
+            self.tracking_cam_id = None
+            self.base_cam_pos = None
+            self.base_cam_quat = None
 
         self.nominal_cube_center = (self.init_qpos[self.cube_qpos:self.cube_qpos + 3].copy()
                                      + CUBE_LOCAL_CENTER)
@@ -211,9 +269,24 @@ class AmazeDexCubeEnv(MujocoEnv):
         self._episode_success_count = 0
         self.close_sign = self._detect_close_sign()
 
+        # Camera latency buffer -- holds recent cube-pose snapshots so
+        # _get_obs() can serve a stale (delayed) one. Sized for the worst
+        # case in cfg.cam_latency_steps; refilled at every reset.
+        self._cam_max_latency = int(cfg.cam_latency_steps[1])
+        self._cam_state_buffer = deque(maxlen=self._cam_max_latency + 1)
+        self._cam_latency = 0
+
     def _cube_center_world(self):
         R = self.data.xmat[self.cubeid].reshape(3, 3)
         return self.data.xpos[self.cubeid] + R @ CUBE_LOCAL_CENTER
+
+    def _cube_snapshot(self):
+        """True (undelayed) cube pose/velocity, for the camera-latency buffer."""
+        return {
+            "pos": self.data.xpos[self.cubeid].copy(),
+            "quat": self.data.xquat[self.cubeid].copy(),
+            "angvel": self.data.qvel[self.cube_dof + 3:self.cube_dof + 6].copy(),
+        }
 
     def _detect_close_sign(self):
         qpos_save = self.data.qpos.copy()
@@ -227,6 +300,23 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.data.qpos[:] = qpos_save
         mujoco.mj_forward(self.model, self.data)
         return 1.0 if dists[1.0] < dists[-1.0] else -1.0
+
+    def _randomize_camera(self):
+        """Jitter the tracking camera's pose about its nominal scene.xml
+        pose. Called fresh every reset (not cumulative) and gated purely by
+        cfg.randomize_camera -- independent of the ctor `randomize` flag,
+        which only controls geom friction below."""
+        if self.tracking_cam_id is None:
+            return
+        c = self.cfg
+        pos_off = np.random.uniform(-c.cam_pos_jitter_m, c.cam_pos_jitter_m, 3).astype(np.float32)
+        self.model.cam_pos[self.tracking_cam_id] = self.base_cam_pos + pos_off
+
+        axis = np.random.normal(size=3)
+        axis /= np.linalg.norm(axis) + 1e-9
+        angle = np.random.uniform(-c.cam_angle_jitter_rad, c.cam_angle_jitter_rad)
+        dq = np.array([np.cos(angle / 2), *(axis * np.sin(angle / 2))])
+        self.model.cam_quat[self.tracking_cam_id] = _qmul(dq, self.base_cam_quat)
 
     @property
     def targetface(self):
@@ -279,8 +369,33 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.data.qpos[self.cube_qpos + 3:self.cube_qpos + 7] = quat
         self.data.qvel[self.cube_dof:self.cube_dof + 6] = 0.0
 
+        # Friction + mass randomization -- off by default (ctor
+        # `randomize=False`). Scoped to the cube only (not the whole
+        # scene): each cube geom's [sliding, torsional, rolling] friction
+        # triplet is jittered independently per axis around its nominal
+        # value, and the cube's mass is jittered around its nominal value
+        # with body_inertia scaled by the same factor to stay consistent.
         if self.randomize:
-            self.model.geom_friction[:] = self.base_friction * np.random.uniform(0.8, 1.2)
+            friction_factors = np.random.uniform(
+                c.friction_range[0], c.friction_range[1],
+                size=self.base_cube_friction.shape)
+            self.model.geom_friction[self.cube_geom_ids] = self.base_cube_friction * friction_factors
+
+            mass_factor = np.random.uniform(c.mass_range[0], c.mass_range[1])
+            self.model.body_mass[self.cubeid] = self.base_cube_mass * mass_factor
+            self.model.body_inertia[self.cubeid] = self.base_cube_inertia * mass_factor
+
+        # Camera pose + latency randomization -- on by default
+        # (cfg.randomize_camera), independent of the friction/mass flag
+        # above. Latency is resampled fresh each episode; the buffer
+        # itself is prefilled further below once the post-settle cube
+        # pose is known.
+        if c.randomize_camera:
+            self._randomize_camera()
+            self._cam_latency = int(np.random.randint(
+                c.cam_latency_steps[0], c.cam_latency_steps[1] + 1))
+        else:
+            self._cam_latency = 0
 
         self.step_count = 0
         self._armed = True
@@ -313,6 +428,15 @@ class AmazeDexCubeEnv(MujocoEnv):
         self.prev_reach = self._reach_dist()
         self._prev_tip_target_dist = None
         self.start_pos = self._cube_center_world().copy()
+
+        # Prefill the camera-latency buffer with the settled post-reset
+        # pose so the very first observation isn't delayed relative to a
+        # nonexistent history.
+        snap = self._cube_snapshot()
+        self._cam_state_buffer.clear()
+        for _ in range(self._cam_state_buffer.maxlen):
+            self._cam_state_buffer.append(snap)
+
         return self._get_obs()
 
     def _face_error_quat(self):
@@ -417,8 +541,9 @@ class AmazeDexCubeEnv(MujocoEnv):
         active = ~touched_mask
         return c.k_reach * float(np.sum(np.clip(d_dist, -REACH_NORM, REACH_NORM) * active))
 
-    def _desired_rot_axis(self):
-        q = self._face_error_quat()
+    def _desired_rot_axis_from(self, R):
+        n = R @ FACE_NORMALS[self.target_face]
+        q = _q_from_vecs(n, np.array([0.0, 0.0, 1.0]))
         axis = q[1:]
         norm = np.linalg.norm(axis)
         if norm < 1e-6:
@@ -428,6 +553,9 @@ class AmazeDexCubeEnv(MujocoEnv):
             # old degenerate "cross product vanished" case.
             return None
         return (axis / norm).astype(np.float32)
+
+    def _desired_rot_axis(self):
+        return self._desired_rot_axis_from(self.data.xmat[self.cubeid].reshape(3, 3))
 
     def _point_to_cube_edges_dist(self, p, corners):
         d_corner = float(np.min(np.linalg.norm(corners - p[None, :], axis=1)))
@@ -480,16 +608,28 @@ class AmazeDexCubeEnv(MujocoEnv):
     def _get_obs(self):
         jpos = np.clip((self.data.qpos[self.qposids] - self.ctrl_mid) / self.ctrl_half, -1.0, 1.0)
         jvel = np.clip(self.data.qvel[self.qvelids] / JVEL_SCALE, -1.0, 1.0)
-        cubequat = self.data.xquat[self.cubeid].astype(np.float32)
-        cube_angvel = np.clip(self.data.qvel[self.cube_dof + 3:self.cube_dof + 6] / ANGVEL_SCALE, -1.0, 1.0)
-        target_normal = self.data.xmat[self.cubeid].reshape(3, 3) @ FACE_NORMALS[self.target_face]
+
+        # Cube-pose-derived fields come from the (possibly stale)
+        # camera-latency buffer rather than live self.data, since these
+        # are the quantities a real vision pipeline would report with
+        # delay. Joint pos/vel and last_action above are proprioceptive
+        # (encoder-based) and stay live regardless of camera latency.
+        delayed = self._cam_state_buffer[-(1 + self._cam_latency)]
+        d_pos, d_quat, d_angvel = delayed["pos"], delayed["quat"], delayed["angvel"]
+        d_R = _quat_to_mat(d_quat)
+
+        cubequat = d_quat.astype(np.float32)
+        cube_angvel = np.clip(d_angvel / ANGVEL_SCALE, -1.0, 1.0)
+        target_normal = d_R @ FACE_NORMALS[self.target_face]
         onehot = np.zeros(6, np.float32)
         onehot[self.target_face] = 1.0
 
-        tip_to_cube = self._tip_to_cube()
+        d_center = d_pos + d_R @ CUBE_LOCAL_CENTER
+        tip_pos = np.array([self.data.site_xpos[s] for s in self.tip_sites])
+        tip_to_cube = np.array([d_center - p for p in tip_pos], dtype=np.float32)
         tip_to_cube_n = np.clip(tip_to_cube / REACH_NORM, -3.0, 3.0).flatten()
 
-        axis = self._desired_rot_axis()
+        axis = self._desired_rot_axis_from(d_R)
         axis_obs = axis.astype(np.float32) if axis is not None else np.zeros(3, np.float32)
 
         return np.concatenate([jpos, jvel, self.last_action, cubequat, cube_angvel,
@@ -603,6 +743,7 @@ class AmazeDexCubeEnv(MujocoEnv):
         full[self.actids] = ctrl
         self.do_simulation(full, self.frame_skip)
         self.step_count += 1
+        self._cam_state_buffer.append(self._cube_snapshot())
 
         cpos = self._cube_center_world()
         z_drop_actual = float(self.start_pos[2] - cpos[2])

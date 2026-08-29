@@ -46,7 +46,7 @@ class AmazeDexRockPaperScissorsEnv(MujocoEnv):
         self,
         # FIX 1: Added '=' and missing comma ',' after default argument
         model_path: str = os.path.abspath(
-            os.path.join(os.path.dirname(__file__), "..", "resources", "scene.xml")
+            os.path.join(os.path.dirname(__file__), "..", "mjcf", "scene.xml")
         ),
         render_mode: str | None = None,
         dense_reward_scale: float = DENSE_REWARD_SCALE,

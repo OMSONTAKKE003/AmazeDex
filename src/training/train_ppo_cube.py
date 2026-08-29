@@ -25,10 +25,10 @@ CLIP_DIR = "logs/clips"
 # All frequencies below are in *environment timesteps* (i.e. what wandb/SB3
 # call num_timesteps), not callback calls -- the // n_envs division below is
 # what converts a timestep target into a callback-call count for a VecEnv.
-EVAL_EVERY_STEPS = 20_000
-VIDEO_EVERY_STEPS = 50_000     
-CKPT_EVERY_STEPS = 20_000     
-EARLY_SAFETY_CKPT_STEPS = 20_000  
+EVAL_EVERY_STEPS = 400_000
+VIDEO_EVERY_STEPS = 400_000     
+CKPT_EVERY_STEPS = 400_000     
+EARLY_SAFETY_CKPT_STEPS = 400_000  
 
 INFO_KEYWORDS = ("success", "episode_success", "episode_success_count",
                   "dropped", "dropped_xy", "dropped_z", "theta_rad",
@@ -302,8 +302,8 @@ def main(resume_path: str | None, n_envs: int, total_timesteps: int,
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--resume", type=str, default=None)
-    parser.add_argument("--n-envs", type=int, default=8)
-    parser.add_argument("--timesteps", type=int, default=2_000_000,
+    parser.add_argument("--n-envs", type=int, default=16)
+    parser.add_argument("--timesteps", type=int, default=5_000_000,
                          help="SAC reuses samples via replay, so this is a starting point, "
                               "not a floor -- watch eval reward, not this constant.")
     parser.add_argument("--device", type=str, default="cuda", help="'cpu', 'cuda', or 'auto'")
