@@ -15,11 +15,9 @@ Trained fully in **MuJoCo** simulation, deployed to real hardware using AprilTag
 ```
 AmazeDex/
 │
-├── basics/                     # RL fundamentals — toy environments
-├── mjcf/                      # MuJoCo assets
-│  
+├── basics/                          # RL fundamentals — toy environments
+├── mjcf/                            # MuJoCo assets
 ├── rockpaperscissors/               # Sim2real mini-task
-│  
 ├── src/                              # Core dextrous manipulation pipeline
 ```
 
@@ -131,8 +129,8 @@ uv run RLPractice/FrozenLake.py
 
 ## 👥 Contributors
 
-- **Luv Bharat Jain**
-- **Om Sontakke**
+- [**Luv Bharat Jain**](https://github.com/luvjain22307-hue)
+- [**Om Sontakke**](https://github.com/OMSONTAKKE003)
 
 ---
 
