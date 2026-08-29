@@ -20,7 +20,7 @@ src/
 
 ---
 
-## 🏋️ Training
+## Training
 
 Four reinforcement learning algorithms were tried, in this order:
 
@@ -45,8 +45,10 @@ Four reinforcement learning algorithms were tried, in this order:
 4. Reweighted the success bonus (`26 → 16`) and drop penalty (`5.1 → 2.0`)
 5. Fixed the start face instead of randomizing both start and target faces, cutting the number of combinations the model had to learn from 36 down to a manageable set
 
-<p align="center">
-  <img src="docs/images/success_rate_graph.png" alt="Training results graph" width="500"/>
-</p>
-
 ---
+
+### Training Results
+
+| No Randomization | Randomization |
+| :---: | :---: |
+| <img src="../assets/images/success_rate_graph.png" width="400" /> | <img src="../assets/images/succes_randomized.jpeg" width="400" /> |

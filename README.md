@@ -28,13 +28,6 @@ AmazeDex/
 ├── rockpaperscissors/              # Sim2real gesture recognition mini-task
 └── src/                            # Core dexterous manipulation pipeline
 ```
----
-
-## Task Objective
-
-To train the 4-fingered Amazing Hand autonomously to rotate a cube to any desired target orientation using deep reinforcement learning, transitioning seamless control policies from simulation to physical hardware.
-
----
 
 ## Simulation & Hardware
 
@@ -101,7 +94,7 @@ This project utilizes [`uv`](https://github.com/astral-sh/uv) for fast, determin
 
 3. **Deploy trained policy to real hardware:**
    ```bash
-   uv run src/deployment/simreal.py
+   uv run src/deployment/deploy.py
    ```
    *(Uses AprilTag pose estimation from `src/perception/aruco_pose.py` to read object pose)*
 
