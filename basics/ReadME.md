@@ -91,14 +91,3 @@ This repository contains reinforcement learning practice scripts, environment sp
 * **Key Features:** Bellman updates, $\epsilon$ decay over time, +20 reward for successful delivery, -10 penalty for illegal pickup/dropoff.
 * **Demo:**  
   <img src="../assets/gif/taxi.gif" width="400" />
-
----
-
-### **Temporal Difference Learning**
-* **Code:** `TemporalDifference.py`
-* **State Space:**
-  * **Size:** Environment-dependent discrete states
-* **Action Space:**
-  * **Size:** Discrete action set (e.g., directional movement)
-* **Algorithm:** TD(0) 
-* **Key Features:** Model-free RL, bootstrapping state values online without waiting for episode termination.
